@@ -1,0 +1,34 @@
+[0.658s] Invoking command in '/home/daniel/Rescue/src/rescue_pc_brain': DEBUGINFOD_URLS=https://debuginfod.ubuntu.com PYTHONPATH=/home/daniel/Rescue/build/rescue_pc_brain/prefix_override:/usr/lib/python3/dist-packages/colcon_core/task/python/colcon_distutils_commands:/home/daniel/Rescue/install/rescue_pc_brain/lib/python3.12/site-packages:${PYTHONPATH} /usr/bin/python3 -W ignore:setup.py install is deprecated -W ignore:easy_install command is deprecated setup.py egg_info --egg-base ../../build/rescue_pc_brain build --build-base /home/daniel/Rescue/build/rescue_pc_brain/build install --record /home/daniel/Rescue/build/rescue_pc_brain/install.log --single-version-externally-managed install_data
+[0.843s] running egg_info
+[0.843s] creating ../../build/rescue_pc_brain/rescue_pc_brain.egg-info
+[0.856s] writing ../../build/rescue_pc_brain/rescue_pc_brain.egg-info/PKG-INFO
+[0.856s] writing dependency_links to ../../build/rescue_pc_brain/rescue_pc_brain.egg-info/dependency_links.txt
+[0.856s] writing entry points to ../../build/rescue_pc_brain/rescue_pc_brain.egg-info/entry_points.txt
+[0.856s] writing requirements to ../../build/rescue_pc_brain/rescue_pc_brain.egg-info/requires.txt
+[0.856s] writing top-level names to ../../build/rescue_pc_brain/rescue_pc_brain.egg-info/top_level.txt
+[0.857s] writing manifest file '../../build/rescue_pc_brain/rescue_pc_brain.egg-info/SOURCES.txt'
+[0.883s] reading manifest file '../../build/rescue_pc_brain/rescue_pc_brain.egg-info/SOURCES.txt'
+[0.884s] writing manifest file '../../build/rescue_pc_brain/rescue_pc_brain.egg-info/SOURCES.txt'
+[0.884s] running build
+[0.884s] running build_py
+[0.884s] creating /home/daniel/Rescue/build/rescue_pc_brain/build
+[0.884s] creating /home/daniel/Rescue/build/rescue_pc_brain/build/lib
+[0.884s] creating /home/daniel/Rescue/build/rescue_pc_brain/build/lib/rescue_pc_brain
+[0.884s] copying rescue_pc_brain/__init__.py -> /home/daniel/Rescue/build/rescue_pc_brain/build/lib/rescue_pc_brain
+[0.884s] running install
+[0.889s] running install_lib
+[0.907s] creating /home/daniel/Rescue/install/rescue_pc_brain/lib/python3.12/site-packages/rescue_pc_brain
+[0.907s] copying /home/daniel/Rescue/build/rescue_pc_brain/build/lib/rescue_pc_brain/__init__.py -> /home/daniel/Rescue/install/rescue_pc_brain/lib/python3.12/site-packages/rescue_pc_brain
+[0.907s] byte-compiling /home/daniel/Rescue/install/rescue_pc_brain/lib/python3.12/site-packages/rescue_pc_brain/__init__.py to __init__.cpython-312.pyc
+[0.908s] running install_data
+[0.908s] creating /home/daniel/Rescue/install/rescue_pc_brain/share/ament_index
+[0.908s] creating /home/daniel/Rescue/install/rescue_pc_brain/share/ament_index/resource_index
+[0.908s] creating /home/daniel/Rescue/install/rescue_pc_brain/share/ament_index/resource_index/packages
+[0.908s] copying resource/rescue_pc_brain -> /home/daniel/Rescue/install/rescue_pc_brain/share/ament_index/resource_index/packages
+[0.908s] copying package.xml -> /home/daniel/Rescue/install/rescue_pc_brain/share/rescue_pc_brain
+[0.908s] running install_egg_info
+[0.926s] Copying ../../build/rescue_pc_brain/rescue_pc_brain.egg-info to /home/daniel/Rescue/install/rescue_pc_brain/lib/python3.12/site-packages/rescue_pc_brain-0.0.0-py3.12.egg-info
+[0.927s] running install_scripts
+[1.016s] Installing ps4_teleop_node script to /home/daniel/Rescue/install/rescue_pc_brain/lib/rescue_pc_brain
+[1.016s] writing list of installed files to '/home/daniel/Rescue/build/rescue_pc_brain/install.log'
+[1.037s] Invoked command in '/home/daniel/Rescue/src/rescue_pc_brain' returned '0': DEBUGINFOD_URLS=https://debuginfod.ubuntu.com PYTHONPATH=/home/daniel/Rescue/build/rescue_pc_brain/prefix_override:/usr/lib/python3/dist-packages/colcon_core/task/python/colcon_distutils_commands:/home/daniel/Rescue/install/rescue_pc_brain/lib/python3.12/site-packages:${PYTHONPATH} /usr/bin/python3 -W ignore:setup.py install is deprecated -W ignore:easy_install command is deprecated setup.py egg_info --egg-base ../../build/rescue_pc_brain build --build-base /home/daniel/Rescue/build/rescue_pc_brain/build install --record /home/daniel/Rescue/build/rescue_pc_brain/install.log --single-version-externally-managed install_data

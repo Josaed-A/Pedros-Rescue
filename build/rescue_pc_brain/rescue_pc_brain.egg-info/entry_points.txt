@@ -1,0 +1,2 @@
+[console_scripts]
+ps4_teleop_node = rescue_pc_brain.ps4_teleop_node:main
