@@ -1,11 +1,14 @@
 import rclpy
 from rclpy.node import Node
 from sensor_msgs.msg import Joy
+from geometry_msgs.msg import Twist
 
 class PS4TeleopNode(Node):
     def __init__(self):
         super().__init__('ps4_teleop_node')
-
+        # Limites de velocidad
+        self.max_linear_speed = 0.5
+        self.max_angular_speed = 1.2
 
         self.axis_linear = 1 # Izquierdo en Y
         self.axis_angular = 0 # Izquierdo en X
@@ -27,12 +30,26 @@ class PS4TeleopNode(Node):
             10
         )
 
+        self.cmd_vel_publisher = self.create_publisher(
+            Twist,
+            '/cmd_vel',
+            10
+        )
+
         self.get_logger().info('Nodo PS4 Teleop iniciado. Esperando mensajes en /joy....')
 
     def apply_deadzone(self, value):
         if abs(value)< self.deadzone:
             return 0.0
         return value
+    
+    def publish_stop(self):
+        cmd = Twist()
+
+        cmd.linear.x = 0.0
+        cmd.angular.z = 0.0
+
+        self.cmd_vel_publisher.publish(cmd)
 
     def joy_callback(self, msg):
         
@@ -44,9 +61,28 @@ class PS4TeleopNode(Node):
         linear_value = self.apply_deadzone(raw_linear_value)
         angular_value = self.apply_deadzone(raw_angular_value)
 
-
         deadman_pressed = msg.buttons[self.deadman_button]
         stop_pressed = msg.buttons[self.stop_button]
+
+        if stop_pressed == 1:
+            self.publish_stop()
+            self.get_logger().info('Parada solicitadad con circulo')
+            return
+        
+        if deadman_pressed == 0:
+            self.publish_stop()
+            self.get_logger().info('movimiento bloqueado')
+            return
+        
+        cmd = Twist()
+
+        cmd.linear.x = linear_value * self.max_linear_speed
+        cmd.angular.z = angular_value * self.max_angular_speed
+
+        self.cmd_vel_publisher.publish(cmd)
+
+
+        
 
         self.get_logger().info(
             f'linear_axis={linear_value:.3f}, '
