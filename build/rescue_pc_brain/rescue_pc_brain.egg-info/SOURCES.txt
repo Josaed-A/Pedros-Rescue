@@ -2,6 +2,11 @@ package.xml
 setup.cfg
 setup.py
 rescue_pc_brain/__init__.py
+rescue_pc_brain/control_config.py
+rescue_pc_brain/controller_mapper.py
+rescue_pc_brain/dashboard_node.py
+rescue_pc_brain/drive_command_builder.py
+rescue_pc_brain/gearbox_manager.py
 rescue_pc_brain/ps4_teleop_node.py
 rescue_pc_brain.egg-info/PKG-INFO
 rescue_pc_brain.egg-info/SOURCES.txt

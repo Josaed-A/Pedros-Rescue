@@ -1,0 +1,25 @@
+[0.816s] Invoking command in '/home/daniel/Rescue/build/rescue_pc_brain': DEBUGINFOD_URLS=https://debuginfod.ubuntu.com PYTHONPATH=/home/daniel/Rescue/build/rescue_pc_brain/prefix_override:/usr/lib/python3/dist-packages/colcon_core/task/python/colcon_distutils_commands:/home/daniel/Rescue/install/rescue_pc_brain/lib/python3.12/site-packages:${PYTHONPATH} /usr/bin/python3 -W ignore:setup.py install is deprecated -W ignore:easy_install command is deprecated setup.py develop --editable --build-directory /home/daniel/Rescue/build/rescue_pc_brain/build --no-deps symlink_data
+[1.167s] running develop
+[1.402s] running egg_info
+[1.402s] creating rescue_pc_brain.egg-info
+[1.427s] writing rescue_pc_brain.egg-info/PKG-INFO
+[1.427s] writing dependency_links to rescue_pc_brain.egg-info/dependency_links.txt
+[1.427s] writing entry points to rescue_pc_brain.egg-info/entry_points.txt
+[1.427s] writing requirements to rescue_pc_brain.egg-info/requires.txt
+[1.428s] writing top-level names to rescue_pc_brain.egg-info/top_level.txt
+[1.428s] writing manifest file 'rescue_pc_brain.egg-info/SOURCES.txt'
+[1.474s] reading manifest file 'rescue_pc_brain.egg-info/SOURCES.txt'
+[1.475s] writing manifest file 'rescue_pc_brain.egg-info/SOURCES.txt'
+[1.499s] running build_ext
+[1.499s] Creating /home/daniel/Rescue/install/rescue_pc_brain/lib/python3.12/site-packages/rescue-pc-brain.egg-link (link to .)
+[1.500s] Installing dashboard_node script to /home/daniel/Rescue/install/rescue_pc_brain/lib/rescue_pc_brain
+[1.500s] Installing ps4_teleop_node script to /home/daniel/Rescue/install/rescue_pc_brain/lib/rescue_pc_brain
+[1.500s] 
+[1.500s] Installed /home/daniel/Rescue/build/rescue_pc_brain
+[1.500s] running symlink_data
+[1.501s] creating /home/daniel/Rescue/install/rescue_pc_brain/share/ament_index
+[1.501s] creating /home/daniel/Rescue/install/rescue_pc_brain/share/ament_index/resource_index
+[1.501s] creating /home/daniel/Rescue/install/rescue_pc_brain/share/ament_index/resource_index/packages
+[1.501s] symbolically linking /home/daniel/Rescue/build/rescue_pc_brain/resource/rescue_pc_brain -> /home/daniel/Rescue/install/rescue_pc_brain/share/ament_index/resource_index/packages
+[1.501s] symbolically linking /home/daniel/Rescue/build/rescue_pc_brain/package.xml -> /home/daniel/Rescue/install/rescue_pc_brain/share/rescue_pc_brain
+[1.541s] Invoked command in '/home/daniel/Rescue/build/rescue_pc_brain' returned '0': DEBUGINFOD_URLS=https://debuginfod.ubuntu.com PYTHONPATH=/home/daniel/Rescue/build/rescue_pc_brain/prefix_override:/usr/lib/python3/dist-packages/colcon_core/task/python/colcon_distutils_commands:/home/daniel/Rescue/install/rescue_pc_brain/lib/python3.12/site-packages:${PYTHONPATH} /usr/bin/python3 -W ignore:setup.py install is deprecated -W ignore:easy_install command is deprecated setup.py develop --editable --build-directory /home/daniel/Rescue/build/rescue_pc_brain/build --no-deps symlink_data

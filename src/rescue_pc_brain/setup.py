@@ -25,6 +25,7 @@ setup(
     entry_points={
         'console_scripts': [
             'ps4_teleop_node = rescue_pc_brain.ps4_teleop_node:main',
+            'dashboard_node = rescue_pc_brain.dashboard_node:main',
         ],
     },
 )
