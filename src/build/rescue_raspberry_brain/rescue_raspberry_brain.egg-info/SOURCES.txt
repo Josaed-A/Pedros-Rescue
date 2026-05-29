@@ -1,0 +1,11 @@
+package.xml
+setup.cfg
+setup.py
+rescue_raspberry_brain/__init__.py
+rescue_raspberry_brain.egg-info/PKG-INFO
+rescue_raspberry_brain.egg-info/SOURCES.txt
+rescue_raspberry_brain.egg-info/dependency_links.txt
+rescue_raspberry_brain.egg-info/requires.txt
+rescue_raspberry_brain.egg-info/top_level.txt
+rescue_raspberry_brain.egg-info/zip-safe
+resource/rescue_raspberry_brain

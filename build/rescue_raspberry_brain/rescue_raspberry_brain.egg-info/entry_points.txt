@@ -1,0 +1,2 @@
+[console_scripts]
+motor_driver_node = rescue_raspberry_brain.motor_driver_node:main

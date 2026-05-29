@@ -1,0 +1,22 @@
+[1.707s] Invoking command in '/home/sraus/Rescue/src/build/rescue_raspberry_brain': DEBUGINFOD_URLS=https://debuginfod.ubuntu.com PYTHONPATH=/home/sraus/Rescue/src/build/rescue_raspberry_brain/prefix_override:/home/sraus/.local/lib/python3.12/site-packages/colcon_core/task/python/colcon_distutils_commands:/home/sraus/Rescue/src/install/rescue_raspberry_brain/lib/python3.12/site-packages:${PYTHONPATH} /usr/bin/python3 -W ignore:setup.py install is deprecated -W ignore:easy_install command is deprecated setup.py develop --editable --build-directory /home/sraus/Rescue/src/build/rescue_raspberry_brain/build --no-deps symlink_data
+[2.179s] running develop
+[2.471s] running egg_info
+[2.471s] creating rescue_raspberry_brain.egg-info
+[2.501s] writing rescue_raspberry_brain.egg-info/PKG-INFO
+[2.501s] writing dependency_links to rescue_raspberry_brain.egg-info/dependency_links.txt
+[2.501s] writing requirements to rescue_raspberry_brain.egg-info/requires.txt
+[2.501s] writing top-level names to rescue_raspberry_brain.egg-info/top_level.txt
+[2.501s] writing manifest file 'rescue_raspberry_brain.egg-info/SOURCES.txt'
+[2.554s] reading manifest file 'rescue_raspberry_brain.egg-info/SOURCES.txt'
+[2.555s] writing manifest file 'rescue_raspberry_brain.egg-info/SOURCES.txt'
+[2.582s] running build_ext
+[2.582s] Creating /home/sraus/Rescue/src/install/rescue_raspberry_brain/lib/python3.12/site-packages/rescue-raspberry-brain.egg-link (link to .)
+[2.583s] 
+[2.583s] Installed /home/sraus/Rescue/src/build/rescue_raspberry_brain
+[2.583s] running symlink_data
+[2.583s] creating /home/sraus/Rescue/src/install/rescue_raspberry_brain/share/ament_index
+[2.583s] creating /home/sraus/Rescue/src/install/rescue_raspberry_brain/share/ament_index/resource_index
+[2.584s] creating /home/sraus/Rescue/src/install/rescue_raspberry_brain/share/ament_index/resource_index/packages
+[2.584s] symbolically linking /home/sraus/Rescue/src/build/rescue_raspberry_brain/resource/rescue_raspberry_brain -> /home/sraus/Rescue/src/install/rescue_raspberry_brain/share/ament_index/resource_index/packages
+[2.584s] symbolically linking /home/sraus/Rescue/src/build/rescue_raspberry_brain/package.xml -> /home/sraus/Rescue/src/install/rescue_raspberry_brain/share/rescue_raspberry_brain
+[2.684s] Invoked command in '/home/sraus/Rescue/src/build/rescue_raspberry_brain' returned '0': DEBUGINFOD_URLS=https://debuginfod.ubuntu.com PYTHONPATH=/home/sraus/Rescue/src/build/rescue_raspberry_brain/prefix_override:/home/sraus/.local/lib/python3.12/site-packages/colcon_core/task/python/colcon_distutils_commands:/home/sraus/Rescue/src/install/rescue_raspberry_brain/lib/python3.12/site-packages:${PYTHONPATH} /usr/bin/python3 -W ignore:setup.py install is deprecated -W ignore:easy_install command is deprecated setup.py develop --editable --build-directory /home/sraus/Rescue/src/build/rescue_raspberry_brain/build --no-deps symlink_data
