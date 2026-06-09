@@ -21,8 +21,6 @@
   <xacro:property name="lidar_height"     value="0.04"/>   <!-- alto lidar [m] -->
   <xacro:property name="lidar_z_offset"   value="0.10"/>   <!-- altura desde tope de cuerpo [m] -->
 
-  <xacro:property name="pi" value="3.14159265358979"/>
-
   <!-- ── Materiales ── -->
   <material name="dark_gray"><color rgba="0.2 0.2 0.2 1.0"/></material>
   <material name="black">    <color rgba="0.1 0.1 0.1 1.0"/></material>

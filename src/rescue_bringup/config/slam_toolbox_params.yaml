@@ -24,11 +24,11 @@ slam_toolbox:
 
     # ── Modo de operación ────────────────────────────────────────
     mode: mapping                 # 'mapping' o 'localization'
-    use_map_saver: true
+    use_map_saver: false
     paused_new_measurements: false
 
     # ── Performance ──────────────────────────────────────────────
-    debug_logging: false
+    debug_logging: true
     throttle_scans: 1             # procesar cada scan (sin saltar)
     transform_publish_period: 0.02   # 50 Hz
     map_update_interval: 2.0         # actualizar mapa cada 2 s

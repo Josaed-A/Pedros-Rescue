@@ -1,0 +1,18 @@
+# ─────────────────────────────────────────────────────────────────
+# udev rules for Pedro's Rescue robot hardware
+# Install: sudo cp /tmp/99-pedros-rescue.rules /etc/udev/rules.d/
+#          sudo udevadm control --reload-rules
+#          sudo udevadm trigger
+# ─────────────────────────────────────────────────────────────────
+
+# LDRobot LD19 lidar (CP210x UART Bridge - Silicon Labs)
+SUBSYSTEM=="tty", ATTRS{idVendor}=="10c4", ATTRS{idProduct}=="ea60", \
+    SYMLINK+="ldlidar", MODE="0666", GROUP="dialout"
+
+# Orbbec Astra Pro — Color camera (HD Camera)
+SUBSYSTEM=="usb", ATTRS{idVendor}=="2bc5", ATTRS{idProduct}=="0501", \
+    MODE="0666"
+
+# Orbbec Astra Pro — Depth sensor
+SUBSYSTEM=="usb", ATTRS{idVendor}=="2bc5", ATTRS{idProduct}=="0403", \
+    MODE="0666"
