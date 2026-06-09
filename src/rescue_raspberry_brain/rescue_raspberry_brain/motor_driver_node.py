@@ -23,7 +23,7 @@ class MotorDriverNode(Node):
 
         # Ganancias para balancear avance y giro.
         self.linear_gain = 1.0
-        self.angular_gain = 0.35
+        self.angular_gain = 1.0
 
         # Si un motor gira al revés, cambia su valor a -1.0.
         self.left_motor_direction = 1.0
@@ -41,10 +41,6 @@ class MotorDriverNode(Node):
         # No es zona muerta del joystick.
         # Solo evita errores numéricos tipo 0.000000000000001.
         self.numeric_zero_epsilon = 1e-9
-
-        # En curva, evita que una rueda se apague demasiado rápido.
-        # 0.75 significa reducción máxima del 75% de la rueda interna.
-        self.max_curve_reduction = 0.75
 
         # =========================
         # Perfil S adaptativo por diferencia
@@ -299,7 +295,7 @@ class MotorDriverNode(Node):
 
     def calculate_motor_targets(self, linear_x, angular_z):
         """
-        Calcula left_target y right_target según el estado.
+        Calcula left_target y right_target con mezcla diferencial.
         """
 
         state = self.detect_motion_state(linear_x, angular_z)
@@ -310,34 +306,13 @@ class MotorDriverNode(Node):
         if state == 'STOP':
             left_motor = 0.0
             right_motor = 0.0
-
-        elif state == 'STRAIGHT':
-            left_motor = linear_x
-            right_motor = linear_x
-
-        elif state == 'PIVOT_TURN':
-            # Giro sobre el propio eje.
-            # Una rueda en un sentido y la otra en el contrario.
-            left_motor = -angular_z
-            right_motor = angular_z
-
         else:
-            # Curva mientras avanza o retrocede.
-            # No se aplica left = linear - angular porque puede apagar
-            # una rueda demasiado pronto.
-            turn_strength = min(abs(angular_z), 1.0)
-            reduction = turn_strength * self.max_curve_reduction
+            left_motor = linear_x + angular_z
+            right_motor = linear_x - angular_z
 
-            if angular_z > 0.0:
-                # Curva hacia un lado:
-                # se reduce la rueda izquierda.
-                left_motor = linear_x * (1.0 - reduction)
-                right_motor = linear_x
-            else:
-                # Curva hacia el otro lado:
-                # se reduce la rueda derecha.
-                left_motor = linear_x
-                right_motor = linear_x * (1.0 - reduction)
+            normalizer = max(1.0, abs(left_motor), abs(right_motor))
+            left_motor = left_motor / normalizer
+            right_motor = right_motor / normalizer
 
         left_motor = self.clamp(left_motor)
         right_motor = self.clamp(right_motor)

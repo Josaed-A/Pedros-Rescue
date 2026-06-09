@@ -1,4 +1,3 @@
-import math
 from dataclasses import dataclass
 
 from rescue_pc_brain import control_config as cfg
@@ -9,6 +8,8 @@ class DriveCommand:
     linear_x: float
     angular_z: float
     target_speed: float
+    left_track: float
+    right_track: float
 
 
 class DriveCommandBuilder:
@@ -23,51 +24,37 @@ class DriveCommandBuilder:
 
     def build(self, controller_state, gearbox_manager):
         """
-        Velocidad deseada:
+        Control tipo tanque con joystick izquierdo.
 
-        target_speed = magnitud_joystick * R2 * limite_caja
-
-        La reversa NO depende de bajar el joystick.
-        La reversa depende del estado FORWARD / REVERSE del gearbox.
-
-        Joystick:
-        - X controla giro
-        - Y aporta magnitud de movimiento
-        - Si X está totalmente hacia un lado, linear.x tiende a 0 y angular.z domina
+        Y adelante/atras mueve ambas orugas en el mismo sentido.
+        X lateral mezcla velocidades; con Y=0 las orugas giran opuestas.
         """
 
-        joystick_x = self.clamp(controller_state.joystick_x, -1.0, 1.0)
-        joystick_y = self.clamp(controller_state.joystick_y, -1.0, 1.0)
+        throttle = self.clamp(controller_state.joystick_y, -1.0, 1.0)
+        turn = self.clamp(controller_state.joystick_x, -1.0, 1.0)
 
-        joystick_magnitude = math.sqrt((joystick_x ** 2) + (joystick_y ** 2))
-        joystick_magnitude = self.clamp(joystick_magnitude, 0.0, 1.0)
-
-        steer = joystick_x
-
-        r2 = controller_state.r2_value
         gear_limit = gearbox_manager.get_gear_limit()
-        direction = gearbox_manager.direction_sign()
 
-        target_speed = joystick_magnitude * r2 * gear_limit
+        left_raw = throttle + turn
+        right_raw = throttle - turn
 
-        linear_x = (
-            target_speed *
-            direction *
-            (1.0 - abs(steer)) *
-            cfg.MAX_LINEAR_SPEED
-        )
+        normalizer = max(1.0, abs(left_raw), abs(right_raw))
 
-        angular_z = (
-            target_speed *
-            steer *
-            cfg.MAX_ANGULAR_SPEED
-        )
+        left_track = (left_raw / normalizer) * gear_limit
+        right_track = (right_raw / normalizer) * gear_limit
+
+        linear_x = ((left_track + right_track) / 2.0) * cfg.MAX_LINEAR_SPEED
+        angular_z = ((left_track - right_track) / 2.0) * cfg.MAX_ANGULAR_SPEED
 
         linear_x = self.clamp(linear_x)
         angular_z = self.clamp(angular_z)
 
+        target_speed = max(abs(left_track), abs(right_track))
+
         return DriveCommand(
             linear_x=linear_x,
             angular_z=angular_z,
-            target_speed=target_speed
+            target_speed=target_speed,
+            left_track=left_track,
+            right_track=right_track
         )
