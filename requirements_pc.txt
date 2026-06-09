@@ -1,0 +1,16 @@
+# Pedro Rescue - PC / command station
+#
+# ROS 2 packages still need to be installed with apt:
+#   ros-<distro>-rclpy
+#   ros-<distro>-sensor-msgs
+#   ros-<distro>-geometry-msgs
+#   ros-<distro>-std-msgs
+#   ros-<distro>-cv-bridge
+#   ros-<distro>-message-filters
+#   ros-<distro>-joy
+#
+# Tkinter is usually installed as:
+#   sudo apt install python3-tk
+
+opencv-python
+numpy

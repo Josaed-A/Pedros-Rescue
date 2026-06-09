@@ -15,10 +15,12 @@ src/
     rescue_command_station/
       control/   # cajas y mezcla tipo tanque
       input/     # lectura del control PS4
+      vision/    # QR y conversion de imagen para GUI
       nodes/     # nodos ROS 2 de PC
 
   rescue_robot_core/
     rescue_robot_core/
+      camera_drivers/ # publicadores de camaras
       config/    # pines, ganancias, tiempos y limites
       drivers/   # salida a hardware BTS7960
       motion/    # traccion diferencial y perfil S
@@ -38,6 +40,28 @@ PS4 / joy_node
 ```
 
 El robot publica `/real_speed_abs` para que la estacion de mando y el dashboard puedan ver la velocidad real aplicada.
+
+## Flujo de vision
+
+```text
+Camaras en el robot
+    -> rescue_robot_core / logitech_camera_node
+    -> /robot/camera/front/image_raw
+    -> rescue_command_station / dashboard_node
+    -> video en vivo + lector QR
+
+Orbbec Astra en el robot
+    -> rescue_robot_core / astra_rgbd_camera_node
+    -> /robot/camera/astra/color/image_raw
+    -> /robot/camera/astra/depth/image_raw
+    -> /robot/camera/astra/points
+    -> rescue_command_station / rgbd_viewer_node
+```
+
+La Astra publica imagen de profundidad `sensor_msgs/Image` con encoding `16UC1`
+y una nube de puntos `sensor_msgs/PointCloud2` para usar despues en mapa 3D.
+La nube usa intrinsecos configurables (`fx`, `fy`, `cx`, `cy`) y debe calibrarse
+con los valores reales de la camara antes de usarla para mapeo preciso.
 
 ## Manejo tipo tanque
 
@@ -75,13 +99,19 @@ Corre en la PC y contiene:
 - `control/gearbox.py`: maneja las 5 cajas.
 - `control/tank_drive.py`: convierte joystick izquierdo a oruga izquierda/derecha y `Twist`.
 - `nodes/ps4_teleop_node.py`: publica `/cmd_vel` y `/drive_status`.
-- `nodes/dashboard_node.py`: interfaz Tkinter para monitorear el manejo.
+- `nodes/dashboard_node.py`: interfaz Tkinter para monitorear manejo, video en vivo y QR.
+- `nodes/rgbd_viewer_node.py`: visor opcional para color + profundidad de la Astra.
+- `vision/qr_detector.py`: deteccion y dibujo de codigos QR.
+- `vision/tk_image.py`: conversion de frames OpenCV a imagenes Tkinter.
 
 ### `rescue_robot_core`
 
 Corre en la Raspberry Pi y contiene:
 
 - `config/motor_config.py`: pines GPIO, limites, ganancias y parametros del perfil S.
+- `camera_drivers/logitech_camera_node.py`: publica la camara frontal en `/robot/camera/front/image_raw`.
+- `camera_drivers/astra_rgbd_camera_node.py`: publica color, profundidad y nube de puntos de Astra.
+- `camera_drivers/point_cloud.py`: convierte imagen de profundidad a `PointCloud2`.
 - `motion/differential_drive.py`: mezcla diferencial para las dos orugas.
 - `motion/s_curve.py`: funciones matematicas del suavizado.
 - `drivers/bts7960.py`: escritura PWM al puente BTS7960.
@@ -90,3 +120,8 @@ Corre en la Raspberry Pi y contiene:
 ## Ejecucion
 
 Ver [COMO_EJECUTAR.md](COMO_EJECUTAR.md).
+
+## Requisitos
+
+- PC / estacion de mando: [requirements_pc.txt](requirements_pc.txt)
+- Raspberry / nucleo del robot: [requirements_raspberry.txt](requirements_raspberry.txt)

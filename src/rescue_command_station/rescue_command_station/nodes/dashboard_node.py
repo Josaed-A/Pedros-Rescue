@@ -1,15 +1,54 @@
 import json
 import tkinter as tk
-from tkinter import ttk
 
 import rclpy
+from cv_bridge import CvBridge
 from rclpy.node import Node
+from sensor_msgs.msg import Image, PointCloud2
 from std_msgs.msg import Float32, String
+
+from rescue_command_station.vision.qr_detector import QrDetector
+from rescue_command_station.vision.tk_image import bgr_frame_to_png_data
+
+
+COLORS = {
+    'bg': '#0b0f14',
+    'surface': '#111821',
+    'surface_high': '#17212d',
+    'surface_soft': '#1c2733',
+    'border': '#263544',
+    'text': '#e7edf4',
+    'muted': '#94a3b8',
+    'cyan': '#38bdf8',
+    'green': '#22c55e',
+    'amber': '#f59e0b',
+    'red': '#ef4444',
+    'blue': '#60a5fa',
+    'black': '#030712',
+}
+
+FONT = 'Segoe UI'
 
 
 class DashboardRosNode(Node):
     def __init__(self):
         super().__init__('drive_dashboard_node')
+
+        self.declare_parameter('camera_topic', '/robot/camera/front/image_raw')
+        self.declare_parameter('point_cloud_topic', '/robot/camera/astra/points')
+
+        self.camera_topic = self.get_parameter('camera_topic').value
+        self.point_cloud_topic = self.get_parameter('point_cloud_topic').value
+
+        self.bridge = CvBridge()
+        self.qr_detector = QrDetector()
+
+        self.latest_camera_frame = None
+        self.latest_qr_text = ''
+        self.camera_frames = 0
+        self.point_cloud_frames = 0
+        self.last_point_cloud_width = 0
+        self.last_point_cloud_frame_id = ''
 
         self.status = {
             'gear': 1,
@@ -29,6 +68,11 @@ class DashboardRosNode(Node):
 
         self.create_subscription(String, '/drive_status', self.drive_status_callback, 10)
         self.create_subscription(Float32, '/real_speed_abs', self.real_speed_callback, 10)
+        self.create_subscription(Image, self.camera_topic, self.camera_callback, 10)
+        self.create_subscription(PointCloud2, self.point_cloud_topic, self.point_cloud_callback, 10)
+
+        self.get_logger().info(f'Dashboard escuchando video en {self.camera_topic}')
+        self.get_logger().info(f'Dashboard escuchando nube de puntos en {self.point_cloud_topic}')
 
     def drive_status_callback(self, msg):
         try:
@@ -39,100 +83,319 @@ class DashboardRosNode(Node):
     def real_speed_callback(self, msg):
         self.status['real_speed_abs'] = msg.data
 
+    def camera_callback(self, msg):
+        try:
+            frame = self.bridge.imgmsg_to_cv2(msg, desired_encoding='bgr8')
+            annotated_frame, qr_text = self.qr_detector.detect_and_annotate(frame)
 
-class DriveDashboardApp:
+            self.latest_camera_frame = annotated_frame
+            self.camera_frames += 1
+
+            if qr_text:
+                self.latest_qr_text = qr_text
+                self.get_logger().info(f'[QR DETECTADO]: {qr_text}')
+        except Exception as exc:
+            self.get_logger().warn(f'No se pudo procesar imagen de camara: {exc}')
+
+    def point_cloud_callback(self, msg):
+        self.point_cloud_frames += 1
+        self.last_point_cloud_width = msg.width
+        self.last_point_cloud_frame_id = msg.header.frame_id
+
+
+class ModernDashboardApp:
     def __init__(self, root, ros_node):
         self.root = root
         self.ros_node = ros_node
+        self.current_camera_photo = None
 
-        self.root.title('Rescue Robot Dashboard')
-        self.root.geometry('540x470')
+        self.root.title('Pedro Rescue - Estacion de Mando')
+        self.root.geometry('1180x720')
+        self.root.minsize(1040, 640)
+        self.root.configure(bg=COLORS['bg'])
 
-        self.gear_var = tk.StringVar()
-        self.gear_limit_var = tk.StringVar()
-        self.status_var = tk.StringVar()
-        self.target_speed_var = tk.StringVar()
-        self.real_speed_var = tk.StringVar()
-        self.left_track_var = tk.StringVar()
-        self.right_track_var = tk.StringVar()
-        self.linear_var = tk.StringVar()
-        self.angular_var = tk.StringVar()
-        self.joy_var = tk.StringVar()
-        self.l1_var = tk.StringVar()
-        self.r1_var = tk.StringVar()
+        self.vars = {
+            'gear': tk.StringVar(),
+            'gear_limit': tk.StringVar(),
+            'status': tk.StringVar(),
+            'target_speed': tk.StringVar(),
+            'real_speed': tk.StringVar(),
+            'left_track': tk.StringVar(),
+            'right_track': tk.StringVar(),
+            'linear': tk.StringVar(),
+            'angular': tk.StringVar(),
+            'joystick': tk.StringVar(),
+            'shift': tk.StringVar(),
+            'camera': tk.StringVar(),
+            'qr': tk.StringVar(),
+            'point_cloud': tk.StringVar(),
+        }
 
         self.build_ui()
         self.refresh_ui()
 
     def build_ui(self):
-        main_frame = ttk.Frame(self.root, padding=16)
-        main_frame.pack(fill='both', expand=True)
+        self.root.grid_columnconfigure(0, weight=1)
+        self.root.grid_rowconfigure(1, weight=1)
 
-        ttk.Label(
-            main_frame,
-            text='Rescue Robot - Panel de Control',
-            font=('Arial', 18, 'bold')
-        ).pack(pady=(0, 16))
+        self.build_header()
 
-        top_frame = ttk.Frame(main_frame)
-        top_frame.pack(fill='x', pady=8)
+        body = tk.Frame(self.root, bg=COLORS['bg'])
+        body.grid(row=1, column=0, sticky='nsew', padx=18, pady=(0, 18))
+        body.grid_columnconfigure(0, weight=0, minsize=340)
+        body.grid_columnconfigure(1, weight=1)
+        body.grid_columnconfigure(2, weight=0, minsize=280)
+        body.grid_rowconfigure(0, weight=1)
 
-        self.add_row(top_frame, 0, 'Caja:', self.gear_var)
-        self.add_row(top_frame, 1, 'Limite:', self.gear_limit_var)
-        self.add_row(top_frame, 2, 'Estado:', self.status_var)
+        self.build_drive_panel(body)
+        self.build_video_panel(body)
+        self.build_system_panel(body)
 
-        ttk.Separator(main_frame).pack(fill='x', pady=12)
+    def build_header(self):
+        header = tk.Frame(self.root, bg=COLORS['bg'])
+        header.grid(row=0, column=0, sticky='ew', padx=18, pady=18)
+        header.grid_columnconfigure(0, weight=1)
 
-        ttk.Label(main_frame, text='Velocidad objetivo', font=('Arial', 12, 'bold')).pack(anchor='w')
-        self.target_bar = ttk.Progressbar(
-            main_frame,
-            orient='horizontal',
-            length=460,
-            mode='determinate',
-            maximum=100
+        title_block = tk.Frame(header, bg=COLORS['bg'])
+        title_block.grid(row=0, column=0, sticky='w')
+
+        tk.Label(
+            title_block,
+            text='Pedro Rescue',
+            bg=COLORS['bg'],
+            fg=COLORS['text'],
+            font=(FONT, 24, 'bold')
+        ).pack(anchor='w')
+        tk.Label(
+            title_block,
+            text='Estacion de mando | traccion, vision y telemetria',
+            bg=COLORS['bg'],
+            fg=COLORS['muted'],
+            font=(FONT, 10)
+        ).pack(anchor='w', pady=(2, 0))
+
+        self.status_pill = tk.Label(
+            header,
+            text='SIN DATOS',
+            bg=COLORS['surface_high'],
+            fg=COLORS['muted'],
+            font=(FONT, 10, 'bold'),
+            padx=16,
+            pady=8
         )
-        self.target_bar.pack(anchor='w', pady=4)
-        ttk.Label(main_frame, textvariable=self.target_speed_var).pack(anchor='w')
+        self.status_pill.grid(row=0, column=1, sticky='e')
 
-        ttk.Label(main_frame, text='Velocidad real motores', font=('Arial', 12, 'bold')).pack(anchor='w', pady=(14, 0))
-        self.real_bar = ttk.Progressbar(
-            main_frame,
-            orient='horizontal',
-            length=460,
-            mode='determinate',
-            maximum=100
+    def build_drive_panel(self, parent):
+        panel = self.card(parent)
+        panel.grid(row=0, column=0, sticky='nsew', padx=(0, 14))
+
+        self.card_title(panel, 'Control de orugas', 'Caja, velocidad y mezcla diferencial')
+
+        gear_row = tk.Frame(panel, bg=COLORS['surface'])
+        gear_row.pack(fill='x', pady=(12, 14))
+
+        self.big_metric(gear_row, 'Caja', self.vars['gear'], COLORS['cyan']).pack(side='left', fill='x', expand=True, padx=(0, 8))
+        self.big_metric(gear_row, 'Limite', self.vars['gear_limit'], COLORS['blue']).pack(side='left', fill='x', expand=True)
+
+        self.target_canvas = self.gauge(panel, 'Velocidad objetivo', self.vars['target_speed'], COLORS['cyan'])
+        self.real_canvas = self.gauge(panel, 'Velocidad real', self.vars['real_speed'], COLORS['green'])
+
+        self.section(panel, 'Orugas')
+        self.track_canvas = tk.Canvas(
+            panel,
+            width=300,
+            height=104,
+            bg=COLORS['surface'],
+            highlightthickness=0
         )
-        self.real_bar.pack(anchor='w', pady=4)
-        ttk.Label(main_frame, textvariable=self.real_speed_var).pack(anchor='w')
+        self.track_canvas.pack(fill='x', pady=(4, 10))
 
-        ttk.Separator(main_frame).pack(fill='x', pady=12)
+        self.small_label(panel, self.vars['left_track'])
+        self.small_label(panel, self.vars['right_track'])
 
-        data_frame = ttk.Frame(main_frame)
-        data_frame.pack(fill='x')
+        self.section(panel, 'Comando ROS')
+        self.small_label(panel, self.vars['linear'])
+        self.small_label(panel, self.vars['angular'])
+        self.small_label(panel, self.vars['joystick'])
+        self.small_label(panel, self.vars['shift'])
 
-        values = [
-            self.left_track_var,
-            self.right_track_var,
-            self.linear_var,
-            self.angular_var,
-            self.joy_var,
-            self.r1_var,
-            self.l1_var,
-        ]
+    def build_video_panel(self, parent):
+        panel = self.card(parent)
+        panel.grid(row=0, column=1, sticky='nsew', padx=(0, 14))
+        panel.grid_rowconfigure(2, weight=1)
+        panel.grid_columnconfigure(0, weight=1)
 
-        for row, variable in enumerate(values):
-            ttk.Label(data_frame, textvariable=variable).grid(row=row, column=0, sticky='w', padx=4, pady=2)
+        self.card_title(panel, 'Video en vivo', 'Camara frontal con deteccion QR')
 
-        ttk.Separator(main_frame).pack(fill='x', pady=12)
+        tk.Label(
+            panel,
+            textvariable=self.vars['camera'],
+            bg=COLORS['surface'],
+            fg=COLORS['muted'],
+            font=(FONT, 9)
+        ).pack(anchor='w', pady=(6, 10))
 
-        help_text = 'Controles: joystick izquierdo mueve orugas | R1 sube caja | L1 baja caja'
-        ttk.Label(main_frame, text=help_text, wraplength=490, font=('Arial', 9)).pack(anchor='w')
+        video_holder = tk.Frame(panel, bg=COLORS['black'], highlightbackground=COLORS['border'], highlightthickness=1)
+        video_holder.pack(fill='both', expand=True)
 
-    def add_row(self, parent, row, label, variable):
-        ttk.Label(parent, text=label, font=('Arial', 12, 'bold')).grid(row=row, column=0, sticky='w')
-        ttk.Label(parent, textvariable=variable, font=('Arial', 12)).grid(row=row, column=1, sticky='w', padx=8)
+        self.camera_label = tk.Label(
+            video_holder,
+            text='Esperando video...',
+            bg=COLORS['black'],
+            fg=COLORS['muted'],
+            font=(FONT, 12)
+        )
+        self.camera_label.pack(fill='both', expand=True)
+
+        qr_box = tk.Frame(panel, bg=COLORS['surface_high'])
+        qr_box.pack(fill='x', pady=(12, 0))
+
+        tk.Label(
+            qr_box,
+            text='QR detectado',
+            bg=COLORS['surface_high'],
+            fg=COLORS['muted'],
+            font=(FONT, 9, 'bold'),
+            padx=12,
+            pady=6
+        ).pack(anchor='w')
+        tk.Label(
+            qr_box,
+            textvariable=self.vars['qr'],
+            bg=COLORS['surface_high'],
+            fg=COLORS['text'],
+            font=(FONT, 12, 'bold'),
+            padx=12,
+            pady=8,
+            wraplength=460,
+            justify='left'
+        ).pack(anchor='w', fill='x')
+
+    def build_system_panel(self, parent):
+        panel = self.card(parent)
+        panel.grid(row=0, column=2, sticky='nsew')
+
+        self.card_title(panel, 'Sistema', 'Vision 3D y estado general')
+
+        self.section(panel, 'Estado')
+        tk.Label(
+            panel,
+            textvariable=self.vars['status'],
+            bg=COLORS['surface_high'],
+            fg=COLORS['text'],
+            font=(FONT, 12, 'bold'),
+            padx=12,
+            pady=10,
+            anchor='w'
+        ).pack(fill='x', pady=(4, 12))
+
+        self.section(panel, 'Nube de puntos')
+        tk.Label(
+            panel,
+            textvariable=self.vars['point_cloud'],
+            bg=COLORS['surface'],
+            fg=COLORS['muted'],
+            font=(FONT, 10),
+            justify='left',
+            wraplength=230
+        ).pack(anchor='w', fill='x')
+
+        self.point_cloud_canvas = tk.Canvas(
+            panel,
+            width=230,
+            height=120,
+            bg=COLORS['surface'],
+            highlightthickness=0
+        )
+        self.point_cloud_canvas.pack(fill='x', pady=(12, 16))
+
+        self.section(panel, 'Atajos')
+        for text in [
+            'R1: subir caja',
+            'L1: bajar caja',
+            'Joystick: control tipo tanque',
+            'Dashboard: video + QR',
+            'Astra: depth image + PointCloud2',
+        ]:
+            self.small_static(panel, text)
+
+    def card(self, parent):
+        frame = tk.Frame(
+            parent,
+            bg=COLORS['surface'],
+            highlightbackground=COLORS['border'],
+            highlightthickness=1,
+            padx=16,
+            pady=16
+        )
+        return frame
+
+    def card_title(self, parent, title, subtitle):
+        tk.Label(
+            parent,
+            text=title,
+            bg=COLORS['surface'],
+            fg=COLORS['text'],
+            font=(FONT, 15, 'bold')
+        ).pack(anchor='w')
+        tk.Label(
+            parent,
+            text=subtitle,
+            bg=COLORS['surface'],
+            fg=COLORS['muted'],
+            font=(FONT, 9)
+        ).pack(anchor='w', pady=(2, 0))
+
+    def section(self, parent, title):
+        tk.Label(
+            parent,
+            text=title.upper(),
+            bg=COLORS['surface'],
+            fg=COLORS['cyan'],
+            font=(FONT, 8, 'bold')
+        ).pack(anchor='w', pady=(14, 4))
+
+    def big_metric(self, parent, label, variable, accent):
+        frame = tk.Frame(parent, bg=COLORS['surface_high'], padx=12, pady=10)
+        tk.Label(frame, text=label, bg=COLORS['surface_high'], fg=COLORS['muted'], font=(FONT, 8, 'bold')).pack(anchor='w')
+        tk.Label(frame, textvariable=variable, bg=COLORS['surface_high'], fg=accent, font=(FONT, 22, 'bold')).pack(anchor='w')
+        return frame
+
+    def gauge(self, parent, title, variable, accent):
+        self.section(parent, title)
+        tk.Label(parent, textvariable=variable, bg=COLORS['surface'], fg=COLORS['text'], font=(FONT, 11, 'bold')).pack(anchor='w')
+        canvas = tk.Canvas(parent, width=300, height=18, bg=COLORS['surface'], highlightthickness=0)
+        canvas.pack(fill='x', pady=(5, 2))
+        canvas.accent = accent
+        return canvas
+
+    def small_label(self, parent, variable):
+        tk.Label(
+            parent,
+            textvariable=variable,
+            bg=COLORS['surface'],
+            fg=COLORS['muted'],
+            font=(FONT, 10),
+            anchor='w'
+        ).pack(fill='x', pady=2)
+
+    def small_static(self, parent, text):
+        tk.Label(
+            parent,
+            text=text,
+            bg=COLORS['surface'],
+            fg=COLORS['muted'],
+            font=(FONT, 10),
+            anchor='w'
+        ).pack(fill='x', pady=3)
 
     def refresh_ui(self):
+        self.refresh_drive_status()
+        self.refresh_camera_status()
+        self.refresh_point_cloud_status()
+        self.root.after(100, self.refresh_ui)
+
+    def refresh_drive_status(self):
         status = self.ros_node.status
 
         gear = int(status.get('gear', 1))
@@ -149,22 +412,110 @@ class DriveDashboardApp:
         l1 = int(status.get('l1_pressed', 0))
         r1 = int(status.get('r1_pressed', 0))
 
-        self.gear_var.set(str(gear))
-        self.gear_limit_var.set(f'{gear_limit * 100.0:.0f}%')
-        self.status_var.set(status_text)
-        self.target_bar['value'] = target_speed * 100.0
-        self.real_bar['value'] = real_speed * 100.0
-        self.target_speed_var.set(f'Objetivo: {target_speed * 100.0:.1f}%')
-        self.real_speed_var.set(f'Real: {real_speed * 100.0:.1f}%')
-        self.left_track_var.set(f'Oruga izquierda: {left_track:.3f}')
-        self.right_track_var.set(f'Oruga derecha: {right_track:.3f}')
-        self.linear_var.set(f'linear.x: {linear_x:.3f}')
-        self.angular_var.set(f'angular.z: {angular_z:.3f}')
-        self.joy_var.set(f'Joystick X: {joy_x:.3f} | Joystick Y: {joy_y:.3f}')
-        self.r1_var.set(f'R1 sube caja: {r1}')
-        self.l1_var.set(f'L1 baja caja: {l1}')
+        self.vars['gear'].set(str(gear))
+        self.vars['gear_limit'].set(f'{gear_limit * 100.0:.0f}%')
+        self.vars['status'].set(status_text)
+        self.vars['target_speed'].set(f'{target_speed * 100.0:.1f}%')
+        self.vars['real_speed'].set(f'{real_speed * 100.0:.1f}%')
+        self.vars['left_track'].set(f'Oruga izquierda: {left_track:.3f}')
+        self.vars['right_track'].set(f'Oruga derecha: {right_track:.3f}')
+        self.vars['linear'].set(f'linear.x: {linear_x:.3f}')
+        self.vars['angular'].set(f'angular.z: {angular_z:.3f}')
+        self.vars['joystick'].set(f'Joystick X: {joy_x:.3f} | Y: {joy_y:.3f}')
+        self.vars['shift'].set(f'R1: {r1} | L1: {l1}')
 
-        self.root.after(100, self.refresh_ui)
+        self.update_status_pill(status_text)
+        self.draw_gauge(self.target_canvas, target_speed)
+        self.draw_gauge(self.real_canvas, real_speed)
+        self.draw_tracks(left_track, right_track)
+
+    def refresh_camera_status(self):
+        frame = self.ros_node.latest_camera_frame
+        self.vars['camera'].set(
+            f'{self.ros_node.camera_topic} | {self.ros_node.camera_frames} frames'
+        )
+        self.vars['qr'].set(self.ros_node.latest_qr_text or 'Sin QR detectado')
+
+        if frame is None:
+            return
+
+        png_data = bgr_frame_to_png_data(frame, max_width=620, max_height=420)
+        if png_data is None:
+            return
+
+        self.current_camera_photo = tk.PhotoImage(data=png_data, format='png')
+        self.camera_label.configure(image=self.current_camera_photo, text='')
+
+    def refresh_point_cloud_status(self):
+        text = (
+            f'Topico: {self.ros_node.point_cloud_topic}\n'
+            f'Nubes recibidas: {self.ros_node.point_cloud_frames}\n'
+            f'Puntos ult. nube: {self.ros_node.last_point_cloud_width}\n'
+            f'Frame: {self.ros_node.last_point_cloud_frame_id or "sin datos"}'
+        )
+        self.vars['point_cloud'].set(text)
+        self.draw_point_cloud_status()
+
+    def update_status_pill(self, status_text):
+        color = COLORS['green'] if status_text == 'CONTROL ACTIVO' else COLORS['amber']
+        if status_text == 'SIN DATOS':
+            color = COLORS['red']
+
+        self.status_pill.configure(text=status_text, fg=color)
+
+    def draw_gauge(self, canvas, value):
+        canvas.delete('all')
+        width = max(canvas.winfo_width(), 300)
+        height = 18
+        value = max(0.0, min(float(value), 1.0))
+
+        canvas.create_rectangle(0, 4, width, height - 4, fill=COLORS['surface_soft'], outline='')
+        canvas.create_rectangle(0, 4, width * value, height - 4, fill=canvas.accent, outline='')
+
+    def draw_tracks(self, left_track, right_track):
+        canvas = self.track_canvas
+        canvas.delete('all')
+        width = max(canvas.winfo_width(), 300)
+        center_x = width / 2
+
+        self.draw_track_bar(canvas, center_x, 26, left_track, 'Izq')
+        self.draw_track_bar(canvas, center_x, 74, right_track, 'Der')
+
+    def draw_track_bar(self, canvas, center_x, y, value, label):
+        bar_width = max(canvas.winfo_width(), 300) - 92
+        half = bar_width / 2
+        x0 = center_x - half
+        x1 = center_x + half
+        color = COLORS['green'] if value >= 0.0 else COLORS['amber']
+
+        canvas.create_text(20, y, text=label, fill=COLORS['muted'], font=(FONT, 9, 'bold'), anchor='w')
+        canvas.create_rectangle(x0, y - 8, x1, y + 8, fill=COLORS['surface_soft'], outline='')
+        canvas.create_line(center_x, y - 12, center_x, y + 12, fill=COLORS['border'])
+        fill_end = center_x + (half * value)
+        fill_start = min(center_x, fill_end)
+        fill_stop = max(center_x, fill_end)
+        canvas.create_rectangle(fill_start, y - 8, fill_stop, y + 8, fill=color, outline='')
+
+    def draw_point_cloud_status(self):
+        canvas = self.point_cloud_canvas
+        canvas.delete('all')
+        width = max(canvas.winfo_width(), 230)
+        height = 120
+        frames = self.ros_node.point_cloud_frames
+        color = COLORS['green'] if frames > 0 else COLORS['surface_soft']
+
+        canvas.create_oval(18, 18, 102, 102, fill=COLORS['surface_high'], outline=COLORS['border'])
+        canvas.create_oval(42, 42, 78, 78, fill=color, outline='')
+        canvas.create_text(130, 44, text='PointCloud2', fill=COLORS['text'], font=(FONT, 11, 'bold'), anchor='w')
+        canvas.create_text(
+            130,
+            70,
+            text='Activo' if frames > 0 else 'Esperando datos',
+            fill=color if frames > 0 else COLORS['muted'],
+            font=(FONT, 10),
+            anchor='w'
+        )
+        canvas.create_line(18, height - 10, width - 18, height - 10, fill=COLORS['border'])
 
 
 def main(args=None):
@@ -172,7 +523,7 @@ def main(args=None):
     ros_node = DashboardRosNode()
 
     root = tk.Tk()
-    DriveDashboardApp(root, ros_node)
+    ModernDashboardApp(root, ros_node)
 
     def spin_ros():
         rclpy.spin_once(ros_node, timeout_sec=0.0)

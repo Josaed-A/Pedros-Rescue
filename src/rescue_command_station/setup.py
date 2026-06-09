@@ -21,6 +21,7 @@ setup(
         'console_scripts': [
             'ps4_teleop_node = rescue_command_station.nodes.ps4_teleop_node:main',
             'dashboard_node = rescue_command_station.nodes.dashboard_node:main',
+            'rgbd_viewer_node = rescue_command_station.nodes.rgbd_viewer_node:main',
         ],
     },
 )
