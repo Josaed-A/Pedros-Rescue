@@ -124,7 +124,28 @@ def generate_launch_description():
         ],
     )
 
-    # ── 5. RViz2 para visualización ──────────────────────────────
+    # ── 5. geotiff_writer — trackea ruta y genera GeoTIFF ───────
+    # Se inicia después del lifecycle manager. Llama al servicio
+    # /save_geotiff para exportar el mapa compliant con RoboCup 2026.
+    geotiff_node = TimerAction(
+        period=8.0,
+        actions=[
+            Node(
+                package='rescue_bringup',
+                executable='geotiff_writer',
+                name='geotiff_writer',
+                output='screen',
+                parameters=[{
+                    'output_dir':  '/root/maps',
+                    'team_name':   'PedrosRescue',
+                    'mission':     'M1',
+                    'path_step_m': 0.08,
+                }],
+            )
+        ],
+    )
+
+    # ── 6. RViz2 para visualización ──────────────────────────────
     rviz_config = os.path.join(pkg_bringup, 'config', 'slam_rviz.rviz')
     rviz_node = TimerAction(
         period=3.0,
@@ -154,5 +175,6 @@ def generate_launch_description():
         lidar_launch,
         slam_node,
         slam_lifecycle_manager,
+        geotiff_node,
         rviz_node,
     ])

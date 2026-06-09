@@ -24,6 +24,8 @@ RUN apt-get update && apt-get install -y \
     libusb-1.0-0-dev \
     v4l-utils \
     usbutils \
+    python3-pil \
+    python3-numpy \
     && rm -rf /var/lib/apt/lists/*
 
 # ── Workspace ─────────────────────────────────────────────────────

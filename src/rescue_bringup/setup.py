@@ -20,5 +20,9 @@ setup(
     maintainer_email='andresazgo@unisabana.edu.co',
     description='Launch and config for Pedro Rescue SLAM stack',
     license='Apache-2.0',
-    entry_points={'console_scripts': []},
+    entry_points={
+        'console_scripts': [
+            'geotiff_writer = rescue_bringup.geotiff_writer:main',
+        ],
+    },
 )

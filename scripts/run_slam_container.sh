@@ -29,6 +29,18 @@ if [ "${1:-}" = "exec" ]; then
     exit $?
 fi
 
+# ── Modo save-geotiff: llama al servicio /save_geotiff ───────────
+# Requiere que el contenedor ya esté corriendo con el SLAM stack.
+# Uso: ./scripts/run_slam_container.sh save-geotiff
+if [ "${1:-}" = "save-geotiff" ]; then
+    podman exec -it "$CONTAINER" bash -c \
+        "source /opt/ros/jazzy/setup.bash && \
+         source /workspace/install/setup.bash 2>/dev/null || true && \
+         echo '━━━ Guardando mapa GeoTIFF... ━━━' && \
+         ros2 service call /save_geotiff std_srvs/srv/Trigger '{}'"
+    exit $?
+fi
+
 # ── Modo diag: diagnóstico completo del sistema ROS ──────────────
 if [ "${1:-}" = "diag" ]; then
     podman exec -it "$CONTAINER" bash -c \
@@ -88,11 +100,7 @@ case "${1:-shell}" in
                --skip-keys 'ldlidar_component ldlidar_node ldlidar OrbbecSDK_ROS2 rescue_raspberry_brain' 2>/dev/null || true && \
              echo '━━━ Compilando workspace ━━━' && \
              colcon build --symlink-install \
-               --packages-skip rescue_raspberry_brain \
-               --packages-skip hector_mapping hector_geotiff hector_trajectory_server \
-                   hector_imu_attitude_to_tf hector_imu_tools hector_compressed_map_transport \
-                   hector_map_tools hector_marker_drawing hector_nav_msgs hector_slam \
-                   world_info world_info_msgs rrl_launchers hector_compressed_map_transport \
+               --packages-skip rescue_raspberry_brain orbbec_camera hector_mapping hector_geotiff hector_trajectory_server hector_imu_attitude_to_tf hector_imu_tools hector_compressed_map_transport hector_map_tools hector_marker_drawing hector_nav_msgs hector_slam world_info world_info_msgs rrl_launchers \
                2>&1 && \
              echo '━━━ Build completo ✅ ━━━' && \
              source /workspace/install/setup.bash && \
