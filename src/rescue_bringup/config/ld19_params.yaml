@@ -1,0 +1,32 @@
+# ─────────────────────────────────────────────────────────────────
+# LDRobot LD19 — parámetros del driver (ldlidar_node)
+# Documentación: https://github.com/Myzhar/ldrobot-lidar-ros2
+# ─────────────────────────────────────────────────────────────────
+
+/**:
+  ros__parameters:
+
+    general:
+      debug_mode: false
+
+    comm:
+      # Puerto serie del lidar.
+      # Crea un regla udev para fijar el nombre del dispositivo:
+      #   SUBSYSTEM=="tty", ATTRS{idVendor}=="0403", SYMLINK+="ldlidar"
+      serial_port: '/dev/ttyUSB0'
+      baudrate: 230400          # LD19 siempre usa 230400 baud
+      timeout_msec: 1000
+
+    lidar:
+      model: 'LD19'
+      rot_verse: 'CCW'          # CCW = CounterClockWise (estándar ROS)
+      units: 'M'                # Metros (estándar ROS)
+      # IMPORTANTE: debe coincidir con el joint en el URDF
+      frame_id: 'ldlidar_link'
+      # bins fijo = 455 → compatibilidad garantizada con slam_toolbox
+      bins: 455
+      range_min: 0.03           # 3 cm mínimo útil
+      range_max: 12.0           # LD19 spec: 12 m
+      enable_angle_crop: false
+      angle_crop_min: 90.0
+      angle_crop_max: 270.0

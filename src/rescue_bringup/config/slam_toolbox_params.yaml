@@ -1,0 +1,77 @@
+# ─────────────────────────────────────────────────────────────────
+# slam_toolbox — parámetros para Pedro's Rescue Robot
+# Modo: mapping asíncrono (online_async)
+# Lidar: LDRobot LD19 (2D, 12 m, 10 Hz)
+# Sin odometría de ruedas → odom = identidad estática
+# ─────────────────────────────────────────────────────────────────
+
+slam_toolbox:
+  ros__parameters:
+
+    # ── Solver ────────────────────────────────────────────────────
+    solver_plugin: solver_plugins::CeresSolver
+    ceres_linear_solver: SPARSE_NORMAL_CHOLESKY
+    ceres_preconditioner: SCHUR_JACOBI
+    ceres_trust_strategy: LEVENBERG_MARQUARDT
+    ceres_dogleg_type: TRADITIONAL_DOGLEG
+    ceres_loss_function: None
+
+    # ── Frames ROS ───────────────────────────────────────────────
+    odom_frame:  odom
+    map_frame:   map
+    base_frame:  base_footprint   # debe ser el link base del robot
+    scan_topic:  /ldlidar_node/scan  # ldlidar_component usa ~/scan → /ldlidar_node/scan
+
+    # ── Modo de operación ────────────────────────────────────────
+    mode: mapping                 # 'mapping' o 'localization'
+    use_map_saver: true
+    paused_new_measurements: false
+
+    # ── Performance ──────────────────────────────────────────────
+    debug_logging: false
+    throttle_scans: 1             # procesar cada scan (sin saltar)
+    transform_publish_period: 0.02   # 50 Hz
+    map_update_interval: 2.0         # actualizar mapa cada 2 s
+    resolution: 0.05                 # 5 cm/píxel
+    max_laser_range: 12.0            # igual que range_max del LD19
+    minimum_time_interval: 0.1       # mínimo 100 ms entre scans
+    transform_timeout: 0.2
+    tf_buffer_duration: 30.0
+    stack_size_to_use: 40000000
+    enable_interactive_mode: true
+    use_lifecycle_manager: false     # sin lifecycle manager para simplicidad
+
+    # ── Scan matching ────────────────────────────────────────────
+    use_scan_matching: true
+    use_scan_barycenter: true
+    minimum_travel_distance: 0.05    # procesar desde 5 cm de movimiento
+    minimum_travel_heading: 0.05     # o 2.9° de rotación
+    scan_buffer_size: 10
+    scan_buffer_maximum_scan_distance: 12.0
+    link_match_minimum_response_fine: 0.1
+    link_scan_maximum_distance: 1.5
+    loop_search_maximum_distance: 3.0
+    do_loop_closing: true
+    loop_match_minimum_chain_size: 10
+    loop_match_maximum_variance_coarse: 3.0
+    loop_match_minimum_response_coarse: 0.35
+    loop_match_minimum_response_fine: 0.45
+
+    # ── Correlación espacial ─────────────────────────────────────
+    correlation_search_space_dimension: 0.5
+    correlation_search_space_resolution: 0.01
+    correlation_search_space_smear_deviation: 0.1
+
+    loop_search_space_dimension: 8.0
+    loop_search_space_resolution: 0.05
+    loop_search_space_smear_deviation: 0.03
+
+    # ── Penalizaciones ───────────────────────────────────────────
+    distance_variance_penalty: 0.5
+    angle_variance_penalty: 1.0
+    fine_search_angle_offset: 0.00349
+    coarse_search_angle_offset: 0.349
+    coarse_angle_resolution: 0.0349
+    minimum_angle_penalty: 0.9
+    minimum_distance_penalty: 0.5
+    use_response_expansion: true
