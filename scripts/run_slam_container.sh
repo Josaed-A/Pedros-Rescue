@@ -81,6 +81,8 @@ DEVICE_ARGS=()
 for v in /dev/video0 /dev/video1 /dev/video2 /dev/video3; do
     [ -e "$v" ] && DEVICE_ARGS+=(--device="$v")
 done
+# Bus USB completo para Orbbec Astra Pro (depth sensor protocolo propietario)
+[ -e /dev/bus/usb ] && DEVICE_ARGS+=(-v /dev/bus/usb:/dev/bus/usb:rw)
 
 # ── Construir imagen si no existe o si se pide rebuild ───────────
 if ! podman image exists "$IMAGE" || [ "$1" = "rebuild" ]; then
@@ -100,7 +102,7 @@ case "${1:-shell}" in
                --skip-keys 'ldlidar_component ldlidar_node ldlidar OrbbecSDK_ROS2 rescue_raspberry_brain' 2>/dev/null || true && \
              echo '━━━ Compilando workspace ━━━' && \
              colcon build --symlink-install \
-               --packages-skip rescue_raspberry_brain orbbec_camera hector_mapping hector_geotiff hector_trajectory_server hector_imu_attitude_to_tf hector_imu_tools hector_compressed_map_transport hector_map_tools hector_marker_drawing hector_nav_msgs hector_slam world_info world_info_msgs rrl_launchers \
+               --packages-skip rescue_raspberry_brain hector_mapping hector_geotiff hector_trajectory_server hector_imu_attitude_to_tf hector_imu_tools hector_compressed_map_transport hector_map_tools hector_marker_drawing hector_nav_msgs hector_slam world_info world_info_msgs rrl_launchers orbbec_camera orbbec_camera_msgs orbbec_description \
                2>&1 && \
              echo '━━━ Build completo ✅ ━━━' && \
              source /workspace/install/setup.bash && \
@@ -111,6 +113,9 @@ case "${1:-shell}" in
     slam)
         CMD="source /opt/ros/jazzy/setup.bash && \
              source /workspace/install/setup.bash && \
+             export LD_LIBRARY_PATH=/workspace/install/astra_camera/lib:\$LD_LIBRARY_PATH && \
+             export OPENNI2_REDIST=/workspace/install/astra_camera/lib && \
+             export OPENNI2_DRIVERS_PATH=/workspace/install/astra_camera/lib/OpenNI2/Drivers && \
              echo '━━━ Lanzando SLAM stack ━━━' && \
              ros2 launch rescue_bringup slam.launch.py"
         ;;
@@ -147,6 +152,33 @@ case "${1:-shell}" in
         CMD="source /opt/ros/jazzy/setup.bash && \
              source /workspace/install/setup.bash && \
              rviz2 -d /workspace/src/rescue_bringup/config/slam_rviz.rviz"
+        ;;
+
+    save-ply)
+        CMD="source /opt/ros/jazzy/setup.bash && \
+             source /workspace/install/setup.bash && \
+             echo '━━━ Guardando nube de puntos 3D PLY... ━━━' && \
+             ros2 service call /save_pointcloud_ply std_srvs/srv/Trigger '{}'"
+        ;;
+
+    save-csv)
+        CMD="source /opt/ros/jazzy/setup.bash && \
+             source /workspace/install/setup.bash && \
+             echo '━━━ Guardando CSV de detecciones... ━━━' && \
+             ros2 service call /save_detection_csv std_srvs/srv/Trigger '{}'"
+        ;;
+
+    save-mission)
+        CMD="source /opt/ros/jazzy/setup.bash && \
+             source /workspace/install/setup.bash && \
+             echo '━━━ Guardando misión completa (GeoTIFF + PLY + CSV)... ━━━' && \
+             ros2 service call /save_geotiff std_srvs/srv/Trigger '{}' && \
+             echo '--- GeoTIFF listo ---' && \
+             ros2 service call /save_pointcloud_ply std_srvs/srv/Trigger '{}' && \
+             echo '--- PLY listo ---' && \
+             ros2 service call /save_detection_csv std_srvs/srv/Trigger '{}' && \
+             echo '━━━ Misión guardada: GeoTIFF + PLY + CSV ✅ ━━━' && \
+             ls -lh /root/maps/ | tail -10"
         ;;
 
     shell|*)

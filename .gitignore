@@ -9,6 +9,7 @@ log/
 # Python
 __pycache__/
 *.pyc
+.claude
 
 # Repositorios externos
 src/Slam/Slam_3d/OrbbecSDK_ROS2/

@@ -23,6 +23,8 @@ setup(
     entry_points={
         'console_scripts': [
             'geotiff_writer = rescue_bringup.geotiff_writer:main',
+            'pointcloud_accumulator = rescue_bringup.pointcloud_accumulator:main',
+            'object_detector = rescue_bringup.object_detector:main',
         ],
     },
 )

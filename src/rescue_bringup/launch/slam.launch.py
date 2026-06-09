@@ -124,7 +124,45 @@ def generate_launch_description():
         ],
     )
 
-    # ── 5. geotiff_writer — trackea ruta y genera GeoTIFF ───────
+    # ── 5. Cámara Orbbec Astra Pro ────────────────────────────────
+    # Se lanza a t=4s para que el driver encuentre el dispositivo USB
+    # antes de que slam_toolbox pida datos de la cámara.
+    # Pasar driver:=openni2 si el SDK v2 no detecta el sensor de depth.
+    camera_launch = TimerAction(
+        period=4.0,
+        actions=[
+            IncludeLaunchDescription(
+                PythonLaunchDescriptionSource(
+                    os.path.join(pkg_bringup, 'launch', 'camera.launch.py')
+                ),
+                launch_arguments={'driver': 'astra'}.items(),
+            )
+        ],
+    )
+
+    # ── 6. pointcloud_accumulator — acumula nube 3D para PLY ─────
+    pc_accum_node = TimerAction(
+        period=10.0,
+        actions=[
+            Node(
+                package='rescue_bringup',
+                executable='pointcloud_accumulator',
+                name='pointcloud_accumulator',
+                output='screen',
+                parameters=[{
+                    'output_dir':  '/root/maps',
+                    'team_name':   'PedrosRescue',
+                    'mission':     'M1',
+                    'voxel_size':  0.02,
+                    'max_range':   4.0,
+                    'min_range':   0.3,
+                    'sample_rate': 3,
+                }],
+            )
+        ],
+    )
+
+    # ── 7. geotiff_writer — trackea ruta y genera GeoTIFF ───────
     # Se inicia después del lifecycle manager. Llama al servicio
     # /save_geotiff para exportar el mapa compliant con RoboCup 2026.
     geotiff_node = TimerAction(
@@ -145,7 +183,31 @@ def generate_launch_description():
         ],
     )
 
-    # ── 6. RViz2 para visualización ──────────────────────────────
+    # ── 8. object_detector — detección AprilTag + Hazmat + YOLO ──
+    object_detector_node = TimerAction(
+        period=12.0,
+        actions=[
+            Node(
+                package='rescue_bringup',
+                executable='object_detector',
+                name='object_detector',
+                output='screen',
+                parameters=[{
+                    'output_dir':        '/root/maps',
+                    'team_name':         'PedrosRescue',
+                    'mission':           'M1',
+                    'robot_name':        'Pedro',
+                    'mode':              'teleop',
+                    'yolo_model':        'yolov8n.pt',
+                    'enable_yolo':       True,
+                    'enable_apriltag':   True,
+                    'enable_hazmat':     True,
+                }],
+            )
+        ],
+    )
+
+    # ── 9. RViz2 para visualización ──────────────────────────────
     rviz_config = os.path.join(pkg_bringup, 'config', 'slam_rviz.rviz')
     rviz_node = TimerAction(
         period=3.0,
@@ -173,8 +235,11 @@ def generate_launch_description():
         ),
         robot_description_launch,
         lidar_launch,
+        camera_launch,
         slam_node,
         slam_lifecycle_manager,
+        pc_accum_node,
         geotiff_node,
+        object_detector_node,
         rviz_node,
     ])

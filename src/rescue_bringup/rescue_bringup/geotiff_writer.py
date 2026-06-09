@@ -81,6 +81,8 @@ class GeotiffWriter(Node):
         self._map: Optional[OccupancyGrid] = None
         self._path: List[Tuple[float, float]] = []
         self._init_pose: Optional[Tuple[float, float]] = None
+        self._init_yaw: Optional[float] = None
+        self._start_time: Optional[datetime.datetime] = None
         self._objects: List[dict] = []   # {type, name, wx, wy}
 
         # TF para rastrear posición del robot
@@ -89,6 +91,9 @@ class GeotiffWriter(Node):
 
         # Suscripciones
         self.create_subscription(OccupancyGrid, '/map', self._on_map, 10)
+        # Recibe detecciones del object_detector (JSON en std_msgs/String)
+        from std_msgs.msg import String as StringMsg
+        self.create_subscription(StringMsg, '/object_detections', self._on_detection, 10)
 
         # Servicio para guardar el mapa
         self.create_service(Trigger, '/save_geotiff', self._on_save)
@@ -118,7 +123,12 @@ class GeotiffWriter(Node):
             wy = t.transform.translation.y
 
             if self._init_pose is None:
+                q = t.transform.rotation
+                self._init_yaw = math.atan2(
+                    2.0 * (q.w * q.z + q.x * q.y),
+                    1.0 - 2.0 * (q.y * q.y + q.z * q.z))
                 self._init_pose = (wx, wy)
+                self._start_time = datetime.datetime.now()
 
             step = self.get_parameter('path_step_m').value
             if (not self._path or
@@ -127,6 +137,28 @@ class GeotiffWriter(Node):
                 self._path.append((wx, wy))
         except Exception:
             pass   # TF aún no disponible
+
+    def _on_detection(self, msg) -> None:
+        """Recibe una detección del object_detector y la añade a la lista."""
+        import json
+        try:
+            det = json.loads(msg.data)
+            # Evitar duplicados: si ya existe un objeto del mismo tipo
+            # a menos de 0.5 m de distancia, ignorar.
+            wx, wy = det.get('wx', 0.0), det.get('wy', 0.0)
+            for existing in self._objects:
+                if (existing['type'] == det.get('type') and
+                        math.hypot(wx - existing['wx'],
+                                   wy - existing['wy']) < 0.5):
+                    return
+            self._objects.append({
+                'type': det.get('type', 'real_object'),
+                'name': det.get('name', '?'),
+                'wx':   wx,
+                'wy':   wy,
+            })
+        except Exception:
+            pass
 
     def _on_save(self, _req, resp: Trigger.Response) -> Trigger.Response:
         if self._map is None:
@@ -234,7 +266,7 @@ class GeotiffWriter(Node):
                    for wx, wy in self._path]
             draw.line(pts, fill=C_PATH, width=path_w)
 
-        # ── 4. POSICIÓN INICIAL DEL ROBOT (flecha verde hacia arriba)
+        # ── 4. POSICIÓN INICIAL DEL ROBOT (flecha verde en dirección real)
 
         if self._init_pose is not None:
             ipx, ipy = self._world_to_px(*self._init_pose, info, ox, oy)
@@ -242,11 +274,25 @@ class GeotiffWriter(Node):
             ipx = ox + mw // 2
             ipy = oy + mh // 2
         ar = max(10, int(ppm * 0.175))   # ~35 cm de tamaño
-        draw.polygon([
-            (ipx,          ipy - ar),          # punta (arriba)
-            (ipx - ar // 2, ipy + ar // 2),    # base izquierda
-            (ipx + ar // 2, ipy + ar // 2),    # base derecha
-        ], fill=C_ROBOT_INIT, outline=(0, 180, 0))
+
+        # La imagen tiene Y invertido: +wy = arriba en mapa = -py en pixel.
+        # Ángulo yaw en pixel-space: +X derecha, +Y abajo.
+        if self._init_yaw is not None:
+            # map +X → pixel -Y (arriba); map +Y → pixel +X (derecha)
+            tip_dx = int(math.sin(self._init_yaw) * ar)   # componente pixel-X de forward
+            tip_dy = int(-math.cos(self._init_yaw) * ar)  # componente pixel-Y de forward
+        else:
+            tip_dx, tip_dy = 0, -ar  # default: apunta arriba
+
+        tip   = (ipx + tip_dx, ipy + tip_dy)
+        perp  = (-tip_dy, tip_dx)  # perpendicular normalizado × ar
+        plen  = max(1, math.hypot(*perp))
+        bl_x  = int(ipx - perp[0] * ar // 2 / plen)
+        bl_y  = int(ipy - perp[1] * ar // 2 / plen)
+        br_x  = int(ipx + perp[0] * ar // 2 / plen)
+        br_y  = int(ipy + perp[1] * ar // 2 / plen)
+        draw.polygon([tip, (bl_x, bl_y), (br_x, br_y)],
+                     fill=C_ROBOT_INIT, outline=(0, 180, 0))
 
         # ── 5. MARCADORES DE OBJETOS ───────────────────────────────
 
@@ -295,8 +341,12 @@ class GeotiffWriter(Node):
         draw.text((y_tip_x - 4, x_bas + 7), 'Y', fill=C_ANNOT, font=f_med)
 
         # ── 8. TEXTO FILENAME — margen inferior ────────────────────
+        # Usar hora de INICIO de misión (no la hora del guardado)
 
-        ts    = datetime.datetime.now().strftime('%H-%M-%S')
+        if self._start_time is not None:
+            ts = self._start_time.strftime('%H-%M-%S')
+        else:
+            ts = datetime.datetime.now().strftime('%H-%M-%S')
         team  = self.get_parameter('team_name').value
         miss  = self.get_parameter('mission').value
         fname = f'RoboCup2026-{team}-{miss}-{ts}.tiff'
