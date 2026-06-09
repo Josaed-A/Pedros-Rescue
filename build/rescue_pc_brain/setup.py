@@ -1,1 +1,0 @@
-/home/daniel/Rescue/src/rescue_pc_brain/setup.py

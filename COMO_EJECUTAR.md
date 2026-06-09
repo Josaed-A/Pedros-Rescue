@@ -33,7 +33,7 @@ La Raspberry controla los motores y escucha `/cmd_vel`.
 cd ~/Pedros-Rescue
 source /opt/ros/<distro>/setup.bash
 source install/setup.bash
-ros2 run rescue_raspberry_brain motor_driver_node
+ros2 run rescue_robot_core motor_driver_node
 ```
 
 ## 4. Ejecutar en la PC
@@ -51,7 +51,7 @@ ros2 run joy joy_node
 cd ~/Pedros-Rescue
 source /opt/ros/<distro>/setup.bash
 source install/setup.bash
-ros2 run rescue_pc_brain ps4_teleop_node
+ros2 run rescue_command_station ps4_teleop_node
 ```
 
 ### Terminal 3: dashboard opcional
@@ -60,7 +60,7 @@ ros2 run rescue_pc_brain ps4_teleop_node
 cd ~/Pedros-Rescue
 source /opt/ros/<distro>/setup.bash
 source install/setup.bash
-ros2 run rescue_pc_brain dashboard_node
+ros2 run rescue_command_station dashboard_node
 ```
 
 ## 5. Controles

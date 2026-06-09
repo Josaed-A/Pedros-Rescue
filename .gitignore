@@ -10,7 +10,3 @@ log/
 __pycache__/
 *.pyc
 
-# Repositorios externos
-src/Slam/Slam_3d/OrbbecSDK_ROS2/
-src/Slam/hector_slam_ros2/
-src/Slam/ldrobot-lidar-ros2/
