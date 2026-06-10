@@ -27,7 +27,7 @@ from typing import List, Optional, Tuple
 import numpy as np
 import rclpy
 from rclpy.node import Node
-from sensor_msgs.msg import LaserScan, PointCloud2
+from sensor_msgs.msg import LaserScan, PointCloud2, PointField
 from std_srvs.srv import Trigger
 import tf2_ros
 
@@ -190,6 +190,11 @@ class PointCloudAccumulator(Node):
 
         self.create_service(Trigger, '/save_pointcloud_ply', self._on_save)
 
+        # Publisher nube acumulada en vivo para RViz
+        self._accum_pub = self.create_publisher(
+            PointCloud2, '/accumulated_pointcloud', 2)
+        self.create_timer(2.0, self._publish_accumulated)
+
         # Timer que intenta capturar la pose de inicio (1 Hz)
         self._start_timer = self.create_timer(1.0, self._try_record_start)
 
@@ -319,6 +324,31 @@ class PointCloudAccumulator(Node):
             resp.message = f'Error al exportar PLY: {exc}'
             self.get_logger().error(resp.message)
         return resp
+
+    # ─── Publisher RViz ───────────────────────────────────────────
+
+    def _publish_accumulated(self) -> None:
+        """Publica la nube acumulada en /accumulated_pointcloud cada 2 s."""
+        if not self._xyz_acc:
+            return
+        all_xyz = np.concatenate(self._xyz_acc, axis=0).astype(np.float32)
+
+        msg = PointCloud2()
+        msg.header.stamp = self.get_clock().now().to_msg()
+        msg.header.frame_id = 'map'
+        msg.height = 1
+        msg.width = len(all_xyz)
+        msg.fields = [
+            PointField(name='x', offset=0,  datatype=PointField.FLOAT32, count=1),
+            PointField(name='y', offset=4,  datatype=PointField.FLOAT32, count=1),
+            PointField(name='z', offset=8,  datatype=PointField.FLOAT32, count=1),
+        ]
+        msg.is_bigendian = False
+        msg.point_step = 12
+        msg.row_step = 12 * len(all_xyz)
+        msg.is_dense = True
+        msg.data = all_xyz.tobytes()
+        self._accum_pub.publish(msg)
 
     # ─── Exportación PLY ──────────────────────────────────────────
 
