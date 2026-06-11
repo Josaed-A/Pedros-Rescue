@@ -1,14 +1,5 @@
-# Pedro Rescue - Raspberry / robot core
-#
-# ROS 2 packages still need to be installed with apt:
-#   ros-<distro>-rclpy
-#   ros-<distro>-sensor-msgs
-#   ros-<distro>-geometry-msgs
-#   ros-<distro>-std-msgs
-#   ros-<distro>-cv-bridge
-#
-# Hardware packages are usually installed with apt:
-#   sudo apt install python3-gpiozero python3-lgpio
+setuptools
 
-opencv-python
-numpy
+# Runtime dependencies are installed from system_requirements_raspberry.txt.
+# OpenCV, NumPy, gpiozero and lgpio are intentionally installed with apt
+# for Raspberry/ROS 2 compatibility.

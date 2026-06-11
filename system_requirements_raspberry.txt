@@ -1,0 +1,18 @@
+# Pedro Rescue - Raspberry / robot core apt dependencies
+#
+# Replace <distro> with your ROS 2 distro, for example humble or jazzy.
+
+python3-pip
+python3-opencv
+python3-numpy
+python3-gpiozero
+python3-lgpio
+python3-colcon-common-extensions
+v4l-utils
+ros-<distro>-rclpy
+ros-<distro>-sensor-msgs
+ros-<distro>-geometry-msgs
+ros-<distro>-std-msgs
+ros-<distro>-cv-bridge
+ros-<distro>-launch
+ros-<distro>-launch-ros

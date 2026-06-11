@@ -8,7 +8,7 @@ from sensor_msgs.msg import Image, PointCloud2
 from std_msgs.msg import Float32, String
 
 from rescue_command_station.vision.qr_detector import QrDetector
-from rescue_command_station.vision.tk_image import bgr_frame_to_png_data
+from rescue_command_station.vision.tk_image import bgr_frame_to_png_data, depth_frame_to_color
 
 
 COLORS = {
@@ -34,18 +34,26 @@ class DashboardRosNode(Node):
     def __init__(self):
         super().__init__('drive_dashboard_node')
 
-        self.declare_parameter('camera_topic', '/robot/camera/front/image_raw')
+        self.declare_parameter('front_camera_topic', '/robot/camera/front/image_raw')
+        self.declare_parameter('astra_color_topic', '/robot/camera/astra/color/image_raw')
+        self.declare_parameter('astra_depth_topic', '/robot/camera/astra/depth/image_raw')
         self.declare_parameter('point_cloud_topic', '/robot/camera/astra/points')
 
-        self.camera_topic = self.get_parameter('camera_topic').value
+        self.front_camera_topic = self.get_parameter('front_camera_topic').value
+        self.astra_color_topic = self.get_parameter('astra_color_topic').value
+        self.astra_depth_topic = self.get_parameter('astra_depth_topic').value
         self.point_cloud_topic = self.get_parameter('point_cloud_topic').value
 
         self.bridge = CvBridge()
         self.qr_detector = QrDetector()
 
-        self.latest_camera_frame = None
+        self.latest_front_frame = None
+        self.latest_astra_color_frame = None
+        self.latest_astra_depth_frame = None
         self.latest_qr_text = ''
-        self.camera_frames = 0
+        self.front_camera_frames = 0
+        self.astra_color_frames = 0
+        self.astra_depth_frames = 0
         self.point_cloud_frames = 0
         self.last_point_cloud_width = 0
         self.last_point_cloud_frame_id = ''
@@ -68,10 +76,14 @@ class DashboardRosNode(Node):
 
         self.create_subscription(String, '/drive_status', self.drive_status_callback, 10)
         self.create_subscription(Float32, '/real_speed_abs', self.real_speed_callback, 10)
-        self.create_subscription(Image, self.camera_topic, self.camera_callback, 10)
+        self.create_subscription(Image, self.front_camera_topic, self.front_camera_callback, 10)
+        self.create_subscription(Image, self.astra_color_topic, self.astra_color_callback, 10)
+        self.create_subscription(Image, self.astra_depth_topic, self.astra_depth_callback, 10)
         self.create_subscription(PointCloud2, self.point_cloud_topic, self.point_cloud_callback, 10)
 
-        self.get_logger().info(f'Dashboard escuchando video en {self.camera_topic}')
+        self.get_logger().info(f'Dashboard escuchando camara frontal en {self.front_camera_topic}')
+        self.get_logger().info(f'Dashboard escuchando Astra color en {self.astra_color_topic}')
+        self.get_logger().info(f'Dashboard escuchando Astra profundidad en {self.astra_depth_topic}')
         self.get_logger().info(f'Dashboard escuchando nube de puntos en {self.point_cloud_topic}')
 
     def drive_status_callback(self, msg):
@@ -83,19 +95,34 @@ class DashboardRosNode(Node):
     def real_speed_callback(self, msg):
         self.status['real_speed_abs'] = msg.data
 
-    def camera_callback(self, msg):
+    def front_camera_callback(self, msg):
         try:
             frame = self.bridge.imgmsg_to_cv2(msg, desired_encoding='bgr8')
             annotated_frame, qr_text = self.qr_detector.detect_and_annotate(frame)
 
-            self.latest_camera_frame = annotated_frame
-            self.camera_frames += 1
+            self.latest_front_frame = annotated_frame
+            self.front_camera_frames += 1
 
             if qr_text:
                 self.latest_qr_text = qr_text
                 self.get_logger().info(f'[QR DETECTADO]: {qr_text}')
         except Exception as exc:
-            self.get_logger().warn(f'No se pudo procesar imagen de camara: {exc}')
+            self.get_logger().warn(f'No se pudo procesar camara frontal: {exc}')
+
+    def astra_color_callback(self, msg):
+        try:
+            self.latest_astra_color_frame = self.bridge.imgmsg_to_cv2(msg, desired_encoding='bgr8')
+            self.astra_color_frames += 1
+        except Exception as exc:
+            self.get_logger().warn(f'No se pudo procesar color Astra: {exc}')
+
+    def astra_depth_callback(self, msg):
+        try:
+            depth_frame = self.bridge.imgmsg_to_cv2(msg, desired_encoding='16UC1')
+            self.latest_astra_depth_frame = depth_frame_to_color(depth_frame)
+            self.astra_depth_frames += 1
+        except Exception as exc:
+            self.get_logger().warn(f'No se pudo procesar profundidad Astra: {exc}')
 
     def point_cloud_callback(self, msg):
         self.point_cloud_frames += 1
@@ -107,7 +134,9 @@ class ModernDashboardApp:
     def __init__(self, root, ros_node):
         self.root = root
         self.ros_node = ros_node
-        self.current_camera_photo = None
+        self.front_camera_photo = None
+        self.astra_color_photo = None
+        self.astra_depth_photo = None
 
         self.root.title('Pedro Rescue - Estacion de Mando')
         self.root.geometry('1180x720')
@@ -126,7 +155,9 @@ class ModernDashboardApp:
             'angular': tk.StringVar(),
             'joystick': tk.StringVar(),
             'shift': tk.StringVar(),
-            'camera': tk.StringVar(),
+            'front_camera': tk.StringVar(),
+            'astra_color': tk.StringVar(),
+            'astra_depth': tk.StringVar(),
             'qr': tk.StringVar(),
             'point_cloud': tk.StringVar(),
         }
@@ -225,27 +256,46 @@ class ModernDashboardApp:
         panel.grid_rowconfigure(2, weight=1)
         panel.grid_columnconfigure(0, weight=1)
 
-        self.card_title(panel, 'Video en vivo', 'Camara frontal con deteccion QR')
+        self.card_title(panel, 'Vision en vivo', 'Frontal con QR + Astra color/profundidad')
 
-        tk.Label(
-            panel,
-            textvariable=self.vars['camera'],
-            bg=COLORS['surface'],
-            fg=COLORS['muted'],
-            font=(FONT, 9)
-        ).pack(anchor='w', pady=(6, 10))
+        video_grid = tk.Frame(panel, bg=COLORS['surface'])
+        video_grid.pack(fill='both', expand=True, pady=(10, 0))
+        video_grid.grid_columnconfigure(0, weight=3)
+        video_grid.grid_columnconfigure(1, weight=2)
+        video_grid.grid_rowconfigure(0, weight=1)
 
-        video_holder = tk.Frame(panel, bg=COLORS['black'], highlightbackground=COLORS['border'], highlightthickness=1)
-        video_holder.pack(fill='both', expand=True)
-
-        self.camera_label = tk.Label(
-            video_holder,
-            text='Esperando video...',
-            bg=COLORS['black'],
-            fg=COLORS['muted'],
-            font=(FONT, 12)
+        front_panel = self.video_slot(
+            video_grid,
+            'Camara frontal',
+            self.vars['front_camera'],
+            'Esperando camara frontal...'
         )
-        self.camera_label.pack(fill='both', expand=True)
+        front_panel.grid(row=0, column=0, sticky='nsew', padx=(0, 10))
+        self.front_camera_label = front_panel.image_label
+
+        side_panel = tk.Frame(video_grid, bg=COLORS['surface'])
+        side_panel.grid(row=0, column=1, sticky='nsew')
+        side_panel.grid_rowconfigure(0, weight=1)
+        side_panel.grid_rowconfigure(1, weight=1)
+        side_panel.grid_columnconfigure(0, weight=1)
+
+        astra_color_panel = self.video_slot(
+            side_panel,
+            'Astra color',
+            self.vars['astra_color'],
+            'Esperando Astra color...'
+        )
+        astra_color_panel.grid(row=0, column=0, sticky='nsew', pady=(0, 10))
+        self.astra_color_label = astra_color_panel.image_label
+
+        astra_depth_panel = self.video_slot(
+            side_panel,
+            'Astra profundidad',
+            self.vars['astra_depth'],
+            'Esperando profundidad...'
+        )
+        astra_depth_panel.grid(row=1, column=0, sticky='nsew')
+        self.astra_depth_label = astra_depth_panel.image_label
 
         qr_box = tk.Frame(panel, bg=COLORS['surface_high'])
         qr_box.pack(fill='x', pady=(12, 0))
@@ -270,6 +320,38 @@ class ModernDashboardApp:
             wraplength=460,
             justify='left'
         ).pack(anchor='w', fill='x')
+
+    def video_slot(self, parent, title, status_var, waiting_text):
+        frame = tk.Frame(parent, bg=COLORS['black'], highlightbackground=COLORS['border'], highlightthickness=1)
+        frame.grid_columnconfigure(0, weight=1)
+        frame.grid_rowconfigure(2, weight=1)
+
+        tk.Label(
+            frame,
+            text=title,
+            bg=COLORS['black'],
+            fg=COLORS['text'],
+            font=(FONT, 10, 'bold'),
+            padx=10,
+            pady=6
+        ).grid(row=0, column=0, sticky='ew')
+        tk.Label(
+            frame,
+            textvariable=status_var,
+            bg=COLORS['black'],
+            fg=COLORS['muted'],
+            font=(FONT, 8),
+            padx=10
+        ).grid(row=1, column=0, sticky='ew')
+        frame.image_label = tk.Label(
+            frame,
+            text=waiting_text,
+            bg=COLORS['black'],
+            fg=COLORS['muted'],
+            font=(FONT, 11)
+        )
+        frame.image_label.grid(row=2, column=0, sticky='nsew')
+        return frame
 
     def build_system_panel(self, parent):
         panel = self.card(parent)
@@ -430,21 +512,50 @@ class ModernDashboardApp:
         self.draw_tracks(left_track, right_track)
 
     def refresh_camera_status(self):
-        frame = self.ros_node.latest_camera_frame
-        self.vars['camera'].set(
-            f'{self.ros_node.camera_topic} | {self.ros_node.camera_frames} frames'
+        self.vars['front_camera'].set(
+            f'{self.ros_node.front_camera_topic} | {self.ros_node.front_camera_frames} frames'
+        )
+        self.vars['astra_color'].set(
+            f'{self.ros_node.astra_color_topic} | {self.ros_node.astra_color_frames} frames'
+        )
+        self.vars['astra_depth'].set(
+            f'{self.ros_node.astra_depth_topic} | {self.ros_node.astra_depth_frames} frames'
         )
         self.vars['qr'].set(self.ros_node.latest_qr_text or 'Sin QR detectado')
 
+        self.update_video_image(
+            self.ros_node.latest_front_frame,
+            self.front_camera_label,
+            'front_camera_photo',
+            560,
+            390
+        )
+        self.update_video_image(
+            self.ros_node.latest_astra_color_frame,
+            self.astra_color_label,
+            'astra_color_photo',
+            330,
+            170
+        )
+        self.update_video_image(
+            self.ros_node.latest_astra_depth_frame,
+            self.astra_depth_label,
+            'astra_depth_photo',
+            330,
+            170
+        )
+
+    def update_video_image(self, frame, label, photo_attribute, max_width, max_height):
         if frame is None:
             return
 
-        png_data = bgr_frame_to_png_data(frame, max_width=620, max_height=420)
+        png_data = bgr_frame_to_png_data(frame, max_width=max_width, max_height=max_height)
         if png_data is None:
             return
 
-        self.current_camera_photo = tk.PhotoImage(data=png_data, format='png')
-        self.camera_label.configure(image=self.current_camera_photo, text='')
+        photo = tk.PhotoImage(data=png_data, format='png')
+        setattr(self, photo_attribute, photo)
+        label.configure(image=photo, text='')
 
     def refresh_point_cloud_status(self):
         text = (

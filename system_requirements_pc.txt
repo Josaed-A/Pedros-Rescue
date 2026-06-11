@@ -1,0 +1,18 @@
+# Pedro Rescue - PC / command station apt dependencies
+#
+# Replace <distro> with your ROS 2 distro, for example humble or jazzy.
+
+python3-pip
+python3-tk
+python3-opencv
+python3-numpy
+python3-colcon-common-extensions
+ros-<distro>-rclpy
+ros-<distro>-sensor-msgs
+ros-<distro>-geometry-msgs
+ros-<distro>-std-msgs
+ros-<distro>-cv-bridge
+ros-<distro>-message-filters
+ros-<distro>-joy
+ros-<distro>-launch
+ros-<distro>-launch-ros

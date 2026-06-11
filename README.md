@@ -17,6 +17,7 @@ src/
       input/     # lectura del control PS4
       vision/    # QR y conversion de imagen para GUI
       nodes/     # nodos ROS 2 de PC
+    launch/      # arranque completo de la estacion de mando
 
   rescue_robot_core/
     rescue_robot_core/
@@ -25,6 +26,7 @@ src/
       drivers/   # salida a hardware BTS7960
       motion/    # traccion diferencial y perfil S
       nodes/     # nodos ROS 2 de la Raspberry
+    launch/      # arranque completo del robot
 ```
 
 ## Flujo de control
@@ -48,14 +50,15 @@ Camaras en el robot
     -> rescue_robot_core / logitech_camera_node
     -> /robot/camera/front/image_raw
     -> rescue_command_station / dashboard_node
-    -> video en vivo + lector QR
+    -> video frontal en vivo + lector QR
 
 Orbbec Astra en el robot
     -> rescue_robot_core / astra_rgbd_camera_node
     -> /robot/camera/astra/color/image_raw
     -> /robot/camera/astra/depth/image_raw
     -> /robot/camera/astra/points
-    -> rescue_command_station / rgbd_viewer_node
+    -> rescue_command_station / dashboard_node
+    -> Astra color + profundidad + estado PointCloud2
 ```
 
 La Astra publica imagen de profundidad `sensor_msgs/Image` con encoding `16UC1`
@@ -101,6 +104,7 @@ Corre en la PC y contiene:
 - `nodes/ps4_teleop_node.py`: publica `/cmd_vel` y `/drive_status`.
 - `nodes/dashboard_node.py`: interfaz Tkinter para monitorear manejo, video en vivo y QR.
 - `nodes/rgbd_viewer_node.py`: visor opcional para color + profundidad de la Astra.
+- `launch/command_station.launch.py`: lanza joy, teleoperacion y GUI juntos.
 - `vision/qr_detector.py`: deteccion y dibujo de codigos QR.
 - `vision/tk_image.py`: conversion de frames OpenCV a imagenes Tkinter.
 
@@ -116,12 +120,25 @@ Corre en la Raspberry Pi y contiene:
 - `motion/s_curve.py`: funciones matematicas del suavizado.
 - `drivers/bts7960.py`: escritura PWM al puente BTS7960.
 - `nodes/motor_driver_node.py`: nodo ROS 2 que escucha `/cmd_vel` y controla motores.
+- `launch/robot_core.launch.py`: lanza motores, Logitech y Astra juntos.
 
 ## Ejecucion
 
-Ver [COMO_EJECUTAR.md](COMO_EJECUTAR.md).
+Arranque normal:
+
+```bash
+# Raspberry
+ros2 launch rescue_robot_core robot_core.launch.py
+
+# PC
+ros2 launch rescue_command_station command_station.launch.py
+```
+
+Ver [COMO_EJECUTAR.md](COMO_EJECUTAR.md) para instalacion, parametros y diagnostico.
 
 ## Requisitos
 
 - PC / estacion de mando: [requirements_pc.txt](requirements_pc.txt)
 - Raspberry / nucleo del robot: [requirements_raspberry.txt](requirements_raspberry.txt)
+- Apt/ROS PC: [system_requirements_pc.txt](system_requirements_pc.txt)
+- Apt/ROS Raspberry: [system_requirements_raspberry.txt](system_requirements_raspberry.txt)
