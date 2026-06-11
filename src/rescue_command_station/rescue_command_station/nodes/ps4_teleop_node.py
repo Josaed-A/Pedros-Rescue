@@ -15,12 +15,20 @@ class PS4TeleopNode(Node):
     def __init__(self):
         super().__init__('ps4_teleop_node')
 
+        self.declare_parameter('cmd_publish_rate_hz', 20.0)
+        self.declare_parameter('joy_timeout_seconds', 0.7)
+
         self.controller_mapper = PS4ControllerMapper()
         self.gearbox = Gearbox()
         self.drive_mixer = TankDriveMixer()
 
+        self.cmd_publish_rate_hz = float(self.get_parameter('cmd_publish_rate_hz').value)
+        self.joy_timeout_seconds = float(self.get_parameter('joy_timeout_seconds').value)
+
         self.real_speed_abs = 0.0
         self.last_controller_state = None
+        self.last_joy_time = None
+        self.last_cmd = Twist()
         self.last_target_speed = 0.0
         self.last_linear_x = 0.0
         self.last_angular_z = 0.0
@@ -35,14 +43,41 @@ class PS4TeleopNode(Node):
         self.cmd_vel_publisher = self.create_publisher(Twist, '/cmd_vel', 10)
         self.drive_status_publisher = self.create_publisher(String, '/drive_status', 10)
 
+        cmd_period = 1.0 / max(self.cmd_publish_rate_hz, 1.0)
+        self.create_timer(cmd_period, self.publish_cmd_heartbeat)
         self.create_timer(0.2, self.publish_periodic_status)
 
         self.get_logger().info('Estacion de mando iniciada.')
         self.get_logger().info('Joystick izquierdo: control tipo tanque.')
         self.get_logger().info('R1 sube caja, L1 baja caja.')
+        self.get_logger().info(f'Heartbeat /cmd_vel: {self.cmd_publish_rate_hz:.1f} Hz')
 
     def real_speed_callback(self, msg):
         self.real_speed_abs = msg.data
+
+    def now_seconds(self):
+        return self.get_clock().now().nanoseconds / 1e9
+
+    def has_fresh_joy(self):
+        if self.last_joy_time is None:
+            return False
+
+        return (self.now_seconds() - self.last_joy_time) <= self.joy_timeout_seconds
+
+    def set_zero_command(self, status_text='SIN JOYSTICK'):
+        self.last_cmd = Twist()
+        self.last_target_speed = 0.0
+        self.last_linear_x = 0.0
+        self.last_angular_z = 0.0
+        self.last_left_track = 0.0
+        self.last_right_track = 0.0
+        self.last_status_text = status_text
+
+    def publish_cmd_heartbeat(self):
+        if not self.has_fresh_joy():
+            self.set_zero_command()
+
+        self.cmd_vel_publisher.publish(self.last_cmd)
 
     def publish_drive_status(
         self,
@@ -86,6 +121,9 @@ class PS4TeleopNode(Node):
         self.drive_status_publisher.publish(msg)
 
     def publish_periodic_status(self):
+        if not self.has_fresh_joy():
+            self.set_zero_command()
+
         self.publish_drive_status(
             controller_state=self.last_controller_state,
             target_speed=self.last_target_speed,
@@ -99,6 +137,7 @@ class PS4TeleopNode(Node):
     def joy_callback(self, msg):
         controller_state = self.controller_mapper.from_joy_msg(msg)
         self.last_controller_state = controller_state
+        self.last_joy_time = self.now_seconds()
 
         self.gearbox.update_from_controller(controller_state)
 
@@ -107,7 +146,8 @@ class PS4TeleopNode(Node):
         cmd = Twist()
         cmd.linear.x = drive_command.linear_x
         cmd.angular.z = drive_command.angular_z
-        self.cmd_vel_publisher.publish(cmd)
+        self.last_cmd = cmd
+        self.cmd_vel_publisher.publish(self.last_cmd)
 
         self.last_target_speed = drive_command.target_speed
         self.last_linear_x = cmd.linear.x

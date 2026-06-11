@@ -1,5 +1,7 @@
 # Output limits and gains.
-MAX_PWM = 1.0
+# 0.85 avoids the brownouts/current limiting that tend to appear at a hard 100%.
+MAX_PWM = 0.85
+PWM_FREQUENCY_HZ = 1000
 LINEAR_GAIN = 1.0
 ANGULAR_GAIN = 1.0
 

@@ -13,6 +13,5 @@ ros-<distro>-rclpy
 ros-<distro>-sensor-msgs
 ros-<distro>-geometry-msgs
 ros-<distro>-std-msgs
-ros-<distro>-cv-bridge
 ros-<distro>-launch
 ros-<distro>-launch-ros

@@ -15,6 +15,14 @@ class MotorDriverNode(Node):
     def __init__(self):
         super().__init__('motor_driver_node')
 
+        self.declare_parameter('max_pwm', cfg.MAX_PWM)
+        self.declare_parameter('pwm_frequency_hz', cfg.PWM_FREQUENCY_HZ)
+        self.declare_parameter('cmd_timeout_seconds', cfg.CMD_TIMEOUT_SECONDS)
+
+        self.max_pwm = float(self.get_parameter('max_pwm').value)
+        self.pwm_frequency_hz = int(self.get_parameter('pwm_frequency_hz').value)
+        self.cmd_timeout_seconds = float(self.get_parameter('cmd_timeout_seconds').value)
+
         self.pin_factory = LGPIOFactory()
 
         self.left_target = 0.0
@@ -43,18 +51,21 @@ class MotorDriverNode(Node):
         self.get_logger().info('Escuchando /cmd_vel...')
         self.get_logger().info('Publicando /real_speed_abs...')
         self.get_logger().info('Perfil S adaptativo activo.')
-        self.get_logger().info(f'Timeout de seguridad: {cfg.CMD_TIMEOUT_SECONDS:.2f} s')
+        self.get_logger().info(f'Timeout de seguridad: {self.cmd_timeout_seconds:.2f} s')
+        self.get_logger().info(
+            f'PWM maximo: {self.max_pwm:.2f}, frecuencia: {self.pwm_frequency_hz} Hz'
+        )
 
     def configure_gpio(self):
         self.left_rpwm = PWMOutputDevice(
             cfg.LEFT_RPWM_PIN,
-            frequency=1000,
+            frequency=self.pwm_frequency_hz,
             initial_value=0.0,
             pin_factory=self.pin_factory
         )
         self.left_lpwm = PWMOutputDevice(
             cfg.LEFT_LPWM_PIN,
-            frequency=1000,
+            frequency=self.pwm_frequency_hz,
             initial_value=0.0,
             pin_factory=self.pin_factory
         )
@@ -71,13 +82,13 @@ class MotorDriverNode(Node):
 
         self.right_rpwm = PWMOutputDevice(
             cfg.RIGHT_RPWM_PIN,
-            frequency=1000,
+            frequency=self.pwm_frequency_hz,
             initial_value=0.0,
             pin_factory=self.pin_factory
         )
         self.right_lpwm = PWMOutputDevice(
             cfg.RIGHT_LPWM_PIN,
-            frequency=1000,
+            frequency=self.pwm_frequency_hz,
             initial_value=0.0,
             pin_factory=self.pin_factory
         )
@@ -199,7 +210,7 @@ class MotorDriverNode(Node):
         self.real_speed_publisher.publish(msg)
 
     def set_motor(self, rpwm, lpwm, power):
-        write_motor_pwm(rpwm, lpwm, power, cfg.MAX_PWM)
+        write_motor_pwm(rpwm, lpwm, power, self.max_pwm)
 
     def stop_all_motors(self):
         self.left_target = 0.0
@@ -221,7 +232,7 @@ class MotorDriverNode(Node):
     def safety_check(self):
         elapsed = (self.get_clock().now() - self.last_cmd_time).nanoseconds / 1e9
 
-        if elapsed > cfg.CMD_TIMEOUT_SECONDS:
+        if elapsed > self.cmd_timeout_seconds:
             self.stop_all_motors()
 
     def cmd_vel_callback(self, msg):
@@ -270,8 +281,8 @@ class MotorDriverNode(Node):
             return
 
         self.log_counter = 0
-        left_pwm = abs(self.left_output) * cfg.MAX_PWM
-        right_pwm = abs(self.right_output) * cfg.MAX_PWM
+        left_pwm = abs(self.left_output) * self.max_pwm
+        right_pwm = abs(self.right_output) * self.max_pwm
 
         self.get_logger().info(
             f'perfil_s -> '

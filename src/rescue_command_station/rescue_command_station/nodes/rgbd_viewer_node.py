@@ -3,10 +3,11 @@ from tkinter import ttk
 
 import message_filters
 import rclpy
-from cv_bridge import CvBridge
 from rclpy.node import Node
+from rclpy.qos import QoSHistoryPolicy, QoSProfile, QoSReliabilityPolicy
 from sensor_msgs.msg import Image
 
+from rescue_command_station.vision.ros_image import image_msg_to_numpy
 from rescue_command_station.vision.tk_image import (
     bgr_frame_to_png_data,
     depth_frame_to_color,
@@ -23,13 +24,27 @@ class RgbdViewerRosNode(Node):
         self.depth_topic = self.get_parameter('depth_topic').value
         self.color_topic = self.get_parameter('color_topic').value
 
-        self.bridge = CvBridge()
         self.latest_color_frame = None
         self.latest_depth_frame = None
         self.frame_pairs = 0
 
-        self.depth_subscriber = message_filters.Subscriber(self, Image, self.depth_topic)
-        self.color_subscriber = message_filters.Subscriber(self, Image, self.color_topic)
+        sensor_qos = QoSProfile(
+            history=QoSHistoryPolicy.KEEP_LAST,
+            depth=1,
+            reliability=QoSReliabilityPolicy.BEST_EFFORT,
+        )
+        self.depth_subscriber = message_filters.Subscriber(
+            self,
+            Image,
+            self.depth_topic,
+            qos_profile=sensor_qos
+        )
+        self.color_subscriber = message_filters.Subscriber(
+            self,
+            Image,
+            self.color_topic,
+            qos_profile=sensor_qos
+        )
 
         self.synchronizer = message_filters.ApproximateTimeSynchronizer(
             [self.depth_subscriber, self.color_subscriber],
@@ -42,8 +57,8 @@ class RgbdViewerRosNode(Node):
 
     def synchronized_callback(self, depth_msg, color_msg):
         try:
-            color_frame = self.bridge.imgmsg_to_cv2(color_msg, desired_encoding='bgr8')
-            depth_frame = self.bridge.imgmsg_to_cv2(depth_msg, desired_encoding='16UC1')
+            color_frame = image_msg_to_numpy(color_msg, desired_encoding='bgr8')
+            depth_frame = image_msg_to_numpy(depth_msg, desired_encoding='16UC1')
 
             self.latest_color_frame = color_frame
             self.latest_depth_frame = depth_frame_to_color(depth_frame)
