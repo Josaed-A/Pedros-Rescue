@@ -12,9 +12,11 @@ def generate_launch_description():
     logitech_fps = LaunchConfiguration('logitech_fps')
     logitech_fourcc = LaunchConfiguration('logitech_fourcc')
     camera_buffer_size = LaunchConfiguration('camera_buffer_size')
+    jpeg_quality = LaunchConfiguration('jpeg_quality')
     astra_depth_index = LaunchConfiguration('astra_depth_index')
     astra_color_index = LaunchConfiguration('astra_color_index')
     astra_fps = LaunchConfiguration('astra_fps')
+    astra_depth_fourcc = LaunchConfiguration('astra_depth_fourcc')
     astra_color_fourcc = LaunchConfiguration('astra_color_fourcc')
     fx = LaunchConfiguration('fx')
     fy = LaunchConfiguration('fy')
@@ -35,9 +37,11 @@ def generate_launch_description():
         DeclareLaunchArgument('logitech_fps', default_value='30'),
         DeclareLaunchArgument('logitech_fourcc', default_value='MJPG'),
         DeclareLaunchArgument('camera_buffer_size', default_value='1'),
-        DeclareLaunchArgument('astra_depth_index', default_value='2'),
-        DeclareLaunchArgument('astra_color_index', default_value='3'),
-        DeclareLaunchArgument('astra_fps', default_value='10'),
+        DeclareLaunchArgument('jpeg_quality', default_value='80'),
+        DeclareLaunchArgument('astra_depth_index', default_value='-1'),
+        DeclareLaunchArgument('astra_color_index', default_value='2'),
+        DeclareLaunchArgument('astra_fps', default_value='30'),
+        DeclareLaunchArgument('astra_depth_fourcc', default_value='YUYV'),
         DeclareLaunchArgument('astra_color_fourcc', default_value='MJPG'),
         DeclareLaunchArgument('fx', default_value='525.0'),
         DeclareLaunchArgument('fy', default_value='525.0'),
@@ -73,6 +77,7 @@ def generate_launch_description():
                 'fps': ParameterValue(logitech_fps, value_type=int),
                 'fourcc': logitech_fourcc,
                 'buffer_size': ParameterValue(camera_buffer_size, value_type=int),
+                'jpeg_quality': ParameterValue(jpeg_quality, value_type=int),
             }],
         ),
         Node(
@@ -84,8 +89,10 @@ def generate_launch_description():
                 'depth_index': ParameterValue(astra_depth_index, value_type=int),
                 'color_index': ParameterValue(astra_color_index, value_type=int),
                 'fps': ParameterValue(astra_fps, value_type=int),
+                'depth_fourcc': astra_depth_fourcc,
                 'color_fourcc': astra_color_fourcc,
                 'buffer_size': ParameterValue(camera_buffer_size, value_type=int),
+                'jpeg_quality': ParameterValue(jpeg_quality, value_type=int),
                 'fx': ParameterValue(fx, value_type=float),
                 'fy': ParameterValue(fy, value_type=float),
                 'cx': ParameterValue(cx, value_type=float),

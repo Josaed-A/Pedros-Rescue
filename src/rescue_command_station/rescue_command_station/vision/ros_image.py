@@ -4,6 +4,15 @@ import cv2
 import numpy as np
 
 
+def compressed_msg_to_numpy(msg, depth=False):
+    buffer = np.frombuffer(msg.data, dtype=np.uint8)
+    flags = cv2.IMREAD_UNCHANGED if depth else cv2.IMREAD_COLOR
+    frame = cv2.imdecode(buffer, flags)
+    if frame is None:
+        raise ValueError(f'No se pudo decodificar imagen comprimida (formato={msg.format})')
+    return frame
+
+
 def image_msg_to_numpy(msg, desired_encoding=None):
     encoding = msg.encoding.lower()
     dtype, channels = get_encoding_layout(encoding)

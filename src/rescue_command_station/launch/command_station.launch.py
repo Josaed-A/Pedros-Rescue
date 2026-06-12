@@ -18,15 +18,15 @@ def generate_launch_description():
     return LaunchDescription([
         DeclareLaunchArgument(
             'front_camera_topic',
-            default_value='/robot/camera/front/image_raw',
+            default_value='/robot/camera/front/image_raw/compressed',
         ),
         DeclareLaunchArgument(
             'astra_color_topic',
-            default_value='/robot/camera/astra/color/image_raw',
+            default_value='/robot/camera/astra/color/image_raw/compressed',
         ),
         DeclareLaunchArgument(
             'astra_depth_topic',
-            default_value='/robot/camera/astra/depth/image_raw',
+            default_value='/robot/camera/astra/depth/image_raw/compressed',
         ),
         DeclareLaunchArgument(
             'point_cloud_topic',

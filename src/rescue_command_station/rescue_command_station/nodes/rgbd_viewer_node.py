@@ -5,9 +5,9 @@ import message_filters
 import rclpy
 from rclpy.node import Node
 from rclpy.qos import QoSHistoryPolicy, QoSProfile, QoSReliabilityPolicy
-from sensor_msgs.msg import Image
+from sensor_msgs.msg import CompressedImage
 
-from rescue_command_station.vision.ros_image import image_msg_to_numpy
+from rescue_command_station.vision.ros_image import compressed_msg_to_numpy
 from rescue_command_station.vision.tk_image import (
     bgr_frame_to_png_data,
     depth_frame_to_color,
@@ -18,8 +18,8 @@ class RgbdViewerRosNode(Node):
     def __init__(self):
         super().__init__('rgbd_viewer_node')
 
-        self.declare_parameter('depth_topic', '/robot/camera/astra/depth/image_raw')
-        self.declare_parameter('color_topic', '/robot/camera/astra/color/image_raw')
+        self.declare_parameter('depth_topic', '/robot/camera/astra/depth/image_raw/compressed')
+        self.declare_parameter('color_topic', '/robot/camera/astra/color/image_raw/compressed')
 
         self.depth_topic = self.get_parameter('depth_topic').value
         self.color_topic = self.get_parameter('color_topic').value
@@ -35,13 +35,13 @@ class RgbdViewerRosNode(Node):
         )
         self.depth_subscriber = message_filters.Subscriber(
             self,
-            Image,
+            CompressedImage,
             self.depth_topic,
             qos_profile=sensor_qos
         )
         self.color_subscriber = message_filters.Subscriber(
             self,
-            Image,
+            CompressedImage,
             self.color_topic,
             qos_profile=sensor_qos
         )
@@ -57,8 +57,8 @@ class RgbdViewerRosNode(Node):
 
     def synchronized_callback(self, depth_msg, color_msg):
         try:
-            color_frame = image_msg_to_numpy(color_msg, desired_encoding='bgr8')
-            depth_frame = image_msg_to_numpy(depth_msg, desired_encoding='16UC1')
+            color_frame = compressed_msg_to_numpy(color_msg)
+            depth_frame = compressed_msg_to_numpy(depth_msg, depth=True)
 
             self.latest_color_frame = color_frame
             self.latest_depth_frame = depth_frame_to_color(depth_frame)

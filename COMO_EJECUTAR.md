@@ -6,13 +6,35 @@ Reemplaza `<distro>` por tu version de ROS 2, por ejemplo `humble` o `jazzy`.
 
 ## 1. Red ROS 2
 
-En la PC y en la Raspberry usa el mismo `ROS_DOMAIN_ID`:
+El WiFi que usa el robot no entrega multicast de forma confiable, asi que el
+descubrimiento normal de DDS NO funciona entre la PC y la Raspberry. Se usa
+un Fast DDS Discovery Server corriendo en la Raspberry.
+
+En la Raspberry (ya configurado en crontab `@reboot`):
 
 ```bash
-export ROS_DOMAIN_ID=10
+fastdds discovery -i 0 -l 0.0.0.0 -p 11811
 ```
 
-Si lo quieres dejar permanente, agregalo al `~/.bashrc` en ambas maquinas.
+En la PC y en la Raspberry (ya agregado al `~/.bashrc` de ambas):
+
+```bash
+export ROS_DISCOVERY_SERVER=<IP_DE_LA_RASPBERRY>:11811
+```
+
+IMPORTANTE: si la IP de la Raspberry cambia (es DHCP), hay que actualizar
+esta variable en el `~/.bashrc` de las dos maquinas. IP actual: `192.168.231.137`.
+
+Para que los comandos `ros2 topic list/echo/hz` vean todos los topicos en
+modo discovery server, usa ademas:
+
+```bash
+export ROS_SUPER_CLIENT=TRUE
+ros2 daemon stop   # reinicia el daemon con las variables nuevas
+```
+
+Nota: `ros2 topic echo/hz` por defecto se suscriben RELIABLE; las camaras
+publican BEST_EFFORT. Para probar a mano agrega `--qos-reliability best_effort`.
 
 ## 2. Dependencias
 
@@ -44,7 +66,32 @@ Dependencias pip:
 python3 -m pip install -r requirements_raspberry.txt
 ```
 
-## 3. Compilar
+## 3. Permisos USB para ROS
+
+Ejecuta esto una vez en la PC y/o Raspberry que use hardware USB
+como Arduino, control, camaras o adaptadores seriales:
+
+```bash
+cd ~/Pedros-Rescue
+sudo scripts/habilitar_usb_ros.sh
+```
+
+Despues cierra sesion y vuelve a entrar, o reinicia la maquina, para que los
+grupos nuevos apliquen. Verifica con:
+
+```bash
+id
+ls -l /dev/ttyUSB* /dev/ttyACM* /dev/input/js* /dev/video*
+```
+
+Grupos usados:
+
+- `dialout`: puertos seriales `/dev/ttyUSB*` y `/dev/ttyACM*`.
+- `video`: camaras `/dev/video*`.
+- `input`: joystick/control `/dev/input/js*`.
+- `plugdev`: dispositivos USB con reglas `udev` que usan este grupo.
+
+## 4. Compilar
 
 Ejecuta esto en la PC y en la Raspberry:
 
@@ -55,7 +102,7 @@ colcon build --symlink-install
 source install/setup.bash
 ```
 
-## 4. Arranque normal
+## 5. Arranque normal
 
 La idea es lanzar todo junto con un launch por maquina.
 
@@ -75,15 +122,14 @@ Parametros utiles:
 ```bash
 ros2 launch rescue_robot_core robot_core.launch.py \
   logitech_index:=0 \
-  astra_depth_index:=2 \
-  astra_color_index:=3 \
-  fx:=525.0 \
-  fy:=525.0 \
-  cx:=319.5 \
-  cy:=239.5 \
-  depth_scale:=0.001 \
-  point_cloud_stride:=4
+  astra_color_index:=2 \
+  astra_depth_index:=-1 \
+  jpeg_quality:=80
 ```
+
+Nota: la Astra Pro solo expone su camara RGB por V4L2 (`/dev/video2`).
+La profundidad real requiere el driver OpenNI2 de Orbbec, por eso
+`astra_depth_index` queda en `-1` (deshabilitada) por defecto.
 
 ### PC: estacion de mando completa
 
@@ -106,13 +152,13 @@ Parametros utiles:
 
 ```bash
 ros2 launch rescue_command_station command_station.launch.py \
-  front_camera_topic:=/robot/camera/front/image_raw \
-  astra_color_topic:=/robot/camera/astra/color/image_raw \
-  astra_depth_topic:=/robot/camera/astra/depth/image_raw \
+  front_camera_topic:=/robot/camera/front/image_raw/compressed \
+  astra_color_topic:=/robot/camera/astra/color/image_raw/compressed \
+  astra_depth_topic:=/robot/camera/astra/depth/image_raw/compressed \
   point_cloud_topic:=/robot/camera/astra/points
 ```
 
-## 5. Controles
+## 6. Controles
 
 - Joystick izquierdo hacia adelante: ambas orugas avanzan.
 - Joystick izquierdo hacia atras: ambas orugas retroceden.
@@ -121,7 +167,7 @@ ros2 launch rescue_command_station command_station.launch.py \
 - `R1`: subir caja.
 - `L1`: bajar caja.
 
-## 6. Topicos principales
+## 7. Topicos principales
 
 Control:
 
@@ -132,29 +178,31 @@ Control:
 /real_speed_abs
 ```
 
-Vision:
+Vision (las imagenes viajan comprimidas como `sensor_msgs/CompressedImage`
+para no saturar el WiFi; color en JPEG y profundidad en PNG 16 bits):
 
 ```text
-/robot/camera/front/image_raw
-/robot/camera/astra/color/image_raw
-/robot/camera/astra/depth/image_raw
+/robot/camera/front/image_raw/compressed
+/robot/camera/astra/color/image_raw/compressed
+/robot/camera/astra/depth/image_raw/compressed
 /robot/camera/astra/points
 ```
 
-## 7. Verificaciones utiles
+## 8. Verificaciones utiles
 
 ```bash
-ros2 topic hz /robot/camera/front/image_raw
-ros2 topic hz /robot/camera/astra/color/image_raw
-ros2 topic hz /robot/camera/astra/depth/image_raw
+ros2 topic hz /robot/camera/front/image_raw/compressed
+ros2 topic hz /robot/camera/astra/color/image_raw/compressed
+ros2 topic hz /robot/camera/astra/depth/image_raw/compressed
 ros2 topic hz /robot/camera/astra/points
+ros2 topic bw /robot/camera/front/image_raw/compressed
 ros2 topic echo /cmd_vel
 ros2 topic echo /real_speed_abs
 ros2 node list
 ros2 topic list
 ```
 
-## 8. Diagnostico por nodo
+## 9. Diagnostico por nodo
 
 Usa estos comandos solo si necesitas probar una parte por separado.
 
@@ -174,7 +222,7 @@ ros2 run rescue_command_station ps4_teleop_node
 ros2 run rescue_command_station dashboard_node
 ```
 
-## 9. Nota de mapa 3D
+## 10. Nota de mapa 3D
 
 La Astra publica profundidad `16UC1` y nube `PointCloud2`.
 Para mapeo 3D preciso hay que calibrar `fx`, `fy`, `cx`, `cy` y `depth_scale` con los valores reales de la camara.

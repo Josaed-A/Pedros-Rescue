@@ -4,11 +4,11 @@ import tkinter as tk
 import rclpy
 from rclpy.node import Node
 from rclpy.qos import QoSHistoryPolicy, QoSProfile, QoSReliabilityPolicy
-from sensor_msgs.msg import Image, PointCloud2
+from sensor_msgs.msg import CompressedImage, PointCloud2
 from std_msgs.msg import Float32, String
 
 from rescue_command_station.vision.qr_detector import QrDetector
-from rescue_command_station.vision.ros_image import image_msg_to_numpy
+from rescue_command_station.vision.ros_image import compressed_msg_to_numpy
 from rescue_command_station.vision.tk_image import bgr_frame_to_png_data, depth_frame_to_color
 
 
@@ -35,9 +35,9 @@ class DashboardRosNode(Node):
     def __init__(self):
         super().__init__('drive_dashboard_node')
 
-        self.declare_parameter('front_camera_topic', '/robot/camera/front/image_raw')
-        self.declare_parameter('astra_color_topic', '/robot/camera/astra/color/image_raw')
-        self.declare_parameter('astra_depth_topic', '/robot/camera/astra/depth/image_raw')
+        self.declare_parameter('front_camera_topic', '/robot/camera/front/image_raw/compressed')
+        self.declare_parameter('astra_color_topic', '/robot/camera/astra/color/image_raw/compressed')
+        self.declare_parameter('astra_depth_topic', '/robot/camera/astra/depth/image_raw/compressed')
         self.declare_parameter('point_cloud_topic', '/robot/camera/astra/points')
 
         self.front_camera_topic = self.get_parameter('front_camera_topic').value
@@ -84,9 +84,9 @@ class DashboardRosNode(Node):
 
         self.create_subscription(String, '/drive_status', self.drive_status_callback, 10)
         self.create_subscription(Float32, '/real_speed_abs', self.real_speed_callback, 10)
-        self.create_subscription(Image, self.front_camera_topic, self.front_camera_callback, sensor_qos)
-        self.create_subscription(Image, self.astra_color_topic, self.astra_color_callback, sensor_qos)
-        self.create_subscription(Image, self.astra_depth_topic, self.astra_depth_callback, sensor_qos)
+        self.create_subscription(CompressedImage, self.front_camera_topic, self.front_camera_callback, sensor_qos)
+        self.create_subscription(CompressedImage, self.astra_color_topic, self.astra_color_callback, sensor_qos)
+        self.create_subscription(CompressedImage, self.astra_depth_topic, self.astra_depth_callback, sensor_qos)
         self.create_subscription(PointCloud2, self.point_cloud_topic, self.point_cloud_callback, sensor_qos)
 
         self.get_logger().info(f'Dashboard escuchando camara frontal en {self.front_camera_topic}')
@@ -105,7 +105,7 @@ class DashboardRosNode(Node):
 
     def front_camera_callback(self, msg):
         try:
-            frame = image_msg_to_numpy(msg, desired_encoding='bgr8')
+            frame = compressed_msg_to_numpy(msg)
             annotated_frame = frame
             now = self.get_clock().now().nanoseconds / 1e9
 
@@ -124,14 +124,14 @@ class DashboardRosNode(Node):
 
     def astra_color_callback(self, msg):
         try:
-            self.latest_astra_color_frame = image_msg_to_numpy(msg, desired_encoding='bgr8')
+            self.latest_astra_color_frame = compressed_msg_to_numpy(msg)
             self.astra_color_frames += 1
         except Exception as exc:
             self.get_logger().warn(f'No se pudo procesar color Astra: {exc}')
 
     def astra_depth_callback(self, msg):
         try:
-            depth_frame = image_msg_to_numpy(msg, desired_encoding='16UC1')
+            depth_frame = compressed_msg_to_numpy(msg, depth=True)
             self.latest_astra_depth_frame = depth_frame_to_color(depth_frame)
             self.astra_depth_frames += 1
         except Exception as exc:
