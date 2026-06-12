@@ -135,6 +135,14 @@ class PS4TeleopNode(Node):
         )
 
     def joy_callback(self, msg):
+        # joy_node publica mensajes vacios cuando el control no esta conectado
+        if not self.controller_mapper.is_valid_joy_msg(msg):
+            self.get_logger().warn(
+                'Mensaje /joy sin ejes suficientes; control desconectado?',
+                throttle_duration_sec=5.0,
+            )
+            return
+
         controller_state = self.controller_mapper.from_joy_msg(msg)
         self.last_controller_state = controller_state
         self.last_joy_time = self.now_seconds()

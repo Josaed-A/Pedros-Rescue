@@ -12,6 +12,12 @@ class ControllerState:
 
 
 class PS4ControllerMapper:
+    def is_valid_joy_msg(self, msg):
+        return (
+            len(msg.axes) > max(cfg.AXIS_LEFT_X, cfg.AXIS_LEFT_Y) and
+            len(msg.buttons) > max(cfg.BUTTON_L1, cfg.BUTTON_R1)
+        )
+
     def from_joy_msg(self, msg):
         return ControllerState(
             joystick_x=msg.axes[cfg.AXIS_LEFT_X] * cfg.STEER_MULTIPLIER,

@@ -39,11 +39,15 @@ class DashboardRosNode(Node):
         self.declare_parameter('astra_color_topic', '/robot/camera/astra/color/image_raw/compressed')
         self.declare_parameter('astra_depth_topic', '/robot/camera/astra/depth/image_raw/compressed')
         self.declare_parameter('point_cloud_topic', '/robot/camera/astra/points')
+        self.declare_parameter('raspberry_timeout_seconds', 2.5)
 
         self.front_camera_topic = self.get_parameter('front_camera_topic').value
         self.astra_color_topic = self.get_parameter('astra_color_topic').value
         self.astra_depth_topic = self.get_parameter('astra_depth_topic').value
         self.point_cloud_topic = self.get_parameter('point_cloud_topic').value
+        self.raspberry_timeout_seconds = float(
+            self.get_parameter('raspberry_timeout_seconds').value
+        )
 
         self.qr_detector = QrDetector()
 
@@ -59,6 +63,8 @@ class DashboardRosNode(Node):
         self.last_point_cloud_frame_id = ''
         self.last_qr_scan_time = 0.0
         self.qr_scan_interval = 0.25
+        self.last_raspberry_msg_time = None
+        self.last_raspberry_source = 'sin datos'
 
         self.status = {
             'gear': 1,
@@ -94,6 +100,20 @@ class DashboardRosNode(Node):
         self.get_logger().info(f'Dashboard escuchando Astra profundidad en {self.astra_depth_topic}')
         self.get_logger().info(f'Dashboard escuchando nube de puntos en {self.point_cloud_topic}')
 
+    def now_seconds(self):
+        return self.get_clock().now().nanoseconds / 1e9
+
+    def mark_raspberry_seen(self, source):
+        self.last_raspberry_msg_time = self.now_seconds()
+        self.last_raspberry_source = source
+
+    def get_raspberry_connection(self):
+        if self.last_raspberry_msg_time is None:
+            return False, None, self.last_raspberry_source
+
+        age = self.now_seconds() - self.last_raspberry_msg_time
+        return age <= self.raspberry_timeout_seconds, age, self.last_raspberry_source
+
     def drive_status_callback(self, msg):
         try:
             self.status.update(json.loads(msg.data))
@@ -101,13 +121,15 @@ class DashboardRosNode(Node):
             self.get_logger().warn('No se pudo leer JSON de /drive_status')
 
     def real_speed_callback(self, msg):
+        self.mark_raspberry_seen('/real_speed_abs')
         self.status['real_speed_abs'] = msg.data
 
     def front_camera_callback(self, msg):
         try:
+            self.mark_raspberry_seen(self.front_camera_topic)
             frame = compressed_msg_to_numpy(msg)
             annotated_frame = frame
-            now = self.get_clock().now().nanoseconds / 1e9
+            now = self.now_seconds()
 
             if now - self.last_qr_scan_time >= self.qr_scan_interval:
                 self.last_qr_scan_time = now
@@ -124,6 +146,7 @@ class DashboardRosNode(Node):
 
     def astra_color_callback(self, msg):
         try:
+            self.mark_raspberry_seen(self.astra_color_topic)
             self.latest_astra_color_frame = compressed_msg_to_numpy(msg)
             self.astra_color_frames += 1
         except Exception as exc:
@@ -131,6 +154,7 @@ class DashboardRosNode(Node):
 
     def astra_depth_callback(self, msg):
         try:
+            self.mark_raspberry_seen(self.astra_depth_topic)
             depth_frame = compressed_msg_to_numpy(msg, depth=True)
             self.latest_astra_depth_frame = depth_frame_to_color(depth_frame)
             self.astra_depth_frames += 1
@@ -138,6 +162,7 @@ class DashboardRosNode(Node):
             self.get_logger().warn(f'No se pudo procesar profundidad Astra: {exc}')
 
     def point_cloud_callback(self, msg):
+        self.mark_raspberry_seen(self.point_cloud_topic)
         self.point_cloud_frames += 1
         self.last_point_cloud_width = msg.width
         self.last_point_cloud_frame_id = msg.header.frame_id
@@ -176,6 +201,7 @@ class ModernDashboardApp:
             'astra_depth': tk.StringVar(),
             'qr': tk.StringVar(),
             'point_cloud': tk.StringVar(),
+            'raspberry': tk.StringVar(),
         }
 
         self.build_ui()
@@ -231,6 +257,17 @@ class ModernDashboardApp:
             pady=8
         )
         self.status_pill.grid(row=0, column=1, sticky='e')
+
+        self.raspberry_pill = tk.Label(
+            header,
+            text='RASP DESCONECTADA',
+            bg=COLORS['surface_high'],
+            fg=COLORS['red'],
+            font=(FONT, 10, 'bold'),
+            padx=16,
+            pady=8
+        )
+        self.raspberry_pill.grid(row=0, column=2, sticky='e', padx=(10, 0))
 
     def build_drive_panel(self, parent):
         panel = self.card(parent)
@@ -378,6 +415,18 @@ class ModernDashboardApp:
         self.section(panel, 'Estado')
         tk.Label(
             panel,
+            textvariable=self.vars['raspberry'],
+            bg=COLORS['surface_high'],
+            fg=COLORS['text'],
+            font=(FONT, 11, 'bold'),
+            padx=12,
+            pady=10,
+            anchor='w',
+            justify='left'
+        ).pack(fill='x', pady=(4, 8))
+
+        tk.Label(
+            panel,
             textvariable=self.vars['status'],
             bg=COLORS['surface_high'],
             fg=COLORS['text'],
@@ -488,10 +537,25 @@ class ModernDashboardApp:
         ).pack(fill='x', pady=3)
 
     def refresh_ui(self):
+        self.refresh_raspberry_status()
         self.refresh_drive_status()
         self.refresh_camera_status()
         self.refresh_point_cloud_status()
         self.root.after(50, self.refresh_ui)
+
+    def refresh_raspberry_status(self):
+        connected, age, source = self.ros_node.get_raspberry_connection()
+        if connected:
+            pill_text = 'RASP CONECTADA'
+            detail_text = 'Raspberry: conectada'
+            color = COLORS['green']
+        else:
+            pill_text = 'RASP DESCONECTADA'
+            detail_text = 'Raspberry: desconectada'
+            color = COLORS['red']
+
+        self.vars['raspberry'].set(detail_text)
+        self.raspberry_pill.configure(text=pill_text, fg=color)
 
     def refresh_drive_status(self):
         status = self.ros_node.status

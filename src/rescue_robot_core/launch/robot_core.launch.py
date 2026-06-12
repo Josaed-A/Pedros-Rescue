@@ -1,5 +1,5 @@
 from launch import LaunchDescription
-from launch.actions import DeclareLaunchArgument
+from launch.actions import DeclareLaunchArgument, SetEnvironmentVariable
 from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
 from launch_ros.parameter_descriptions import ParameterValue
@@ -31,6 +31,9 @@ def generate_launch_description():
     cmd_timeout_seconds = LaunchConfiguration('cmd_timeout_seconds')
 
     return LaunchDescription([
+        SetEnvironmentVariable('ROS_DOMAIN_ID', '0'),
+        SetEnvironmentVariable('ROS_AUTOMATIC_DISCOVERY_RANGE', 'SUBNET'),
+        SetEnvironmentVariable('ROS_LOCALHOST_ONLY', '0'),
         DeclareLaunchArgument('logitech_index', default_value='0'),
         DeclareLaunchArgument('logitech_width', default_value='640'),
         DeclareLaunchArgument('logitech_height', default_value='480'),
