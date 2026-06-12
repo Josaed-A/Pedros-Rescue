@@ -1,3 +1,0 @@
-[console_scripts]
-dashboard_node = rescue_pc_brain.dashboard_node:main
-ps4_teleop_node = rescue_pc_brain.ps4_teleop_node:main

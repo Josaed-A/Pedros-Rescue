@@ -1,0 +1,4 @@
+setuptools
+
+# Runtime dependencies are installed from system_requirements_pc.txt.
+# OpenCV and NumPy are intentionally installed with apt for ROS 2 compatibility.

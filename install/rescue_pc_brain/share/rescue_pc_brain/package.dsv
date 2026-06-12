@@ -1,9 +1,0 @@
-source;share/rescue_pc_brain/hook/pythonpath.ps1
-source;share/rescue_pc_brain/hook/pythonpath.dsv
-source;share/rescue_pc_brain/hook/pythonpath.sh
-source;share/rescue_pc_brain/hook/ament_prefix_path.ps1
-source;share/rescue_pc_brain/hook/ament_prefix_path.dsv
-source;share/rescue_pc_brain/hook/ament_prefix_path.sh
-source;../../build/rescue_pc_brain/share/rescue_pc_brain/hook/pythonpath_develop.ps1
-source;../../build/rescue_pc_brain/share/rescue_pc_brain/hook/pythonpath_develop.dsv
-source;../../build/rescue_pc_brain/share/rescue_pc_brain/hook/pythonpath_develop.sh
