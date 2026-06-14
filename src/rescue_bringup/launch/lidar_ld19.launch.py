@@ -23,7 +23,7 @@ from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument
 from launch.substitutions import LaunchConfiguration
-from launch_ros.actions import ComposableNodeContainer, Node
+from launch_ros.actions import ComposableNodeContainer
 from launch_ros.descriptions import ComposableNode
 
 
@@ -36,23 +36,9 @@ def generate_launch_description():
         'ld19_params.yaml',
     )
 
-    # ── Lifecycle manager para el ldlidar ─────────────────────────
-    lc_mgr_config = os.path.join(
-        get_package_share_directory('ldlidar_node'),
-        'params',
-        'lifecycle_mgr.yaml',
-    )
-
-    lifecycle_manager = Node(
-        package='nav2_lifecycle_manager',
-        executable='lifecycle_manager',
-        name='ldlidar_lifecycle_manager',
-        output='screen',
-        parameters=[lc_mgr_config],
-    )
-
     # ── Container con el componente LDLidar ──────────────────────
     # El componente publica ~/scan → /ldlidar_node/scan
+    # Sin nav2_lifecycle_manager (no disponible en Pi — solo SLAM PC)
     ldlidar_container = ComposableNodeContainer(
         name='ldlidar_container',
         namespace='',
@@ -83,5 +69,4 @@ def generate_launch_description():
             description='Puerto serie del LDRobot LD19',
         ),
         ldlidar_container,
-        lifecycle_manager,
     ])

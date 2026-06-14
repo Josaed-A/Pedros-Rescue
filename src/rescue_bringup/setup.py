@@ -13,6 +13,7 @@ setup(
         ('share/' + package_name, ['package.xml']),
         ('share/' + package_name + '/launch', glob('launch/*.py')),
         ('share/' + package_name + '/config',  glob('config/*.yaml') + glob('config/*.rviz')),
+        ('share/' + package_name + '/models',  glob('models/*.pt') + glob('models/*.onnx')),
     ],
     install_requires=['setuptools'],
     zip_safe=True,
@@ -25,6 +26,7 @@ setup(
             'geotiff_writer = rescue_bringup.geotiff_writer:main',
             'pointcloud_accumulator = rescue_bringup.pointcloud_accumulator:main',
             'object_detector = rescue_bringup.object_detector:main',
+            'logitech_pub = rescue_bringup.logitech_pub:main',
         ],
     },
 )

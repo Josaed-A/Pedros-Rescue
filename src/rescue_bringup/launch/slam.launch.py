@@ -32,14 +32,18 @@ from launch.actions import (
     IncludeLaunchDescription,
     TimerAction,
 )
+from launch.conditions import IfCondition
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
 
 
 def generate_launch_description():
-    use_sim_time = LaunchConfiguration('use_sim_time', default='false')
-    serial_port  = LaunchConfiguration('serial_port',  default='/dev/ttyUSB0')
+    use_sim_time      = LaunchConfiguration('use_sim_time',    default='false')
+    serial_port       = LaunchConfiguration('serial_port',    default='/dev/ttyUSB0')
+    launch_rviz       = LaunchConfiguration('launch_rviz',    default='true')
+    launch_detector   = LaunchConfiguration('launch_detector', default='false')
+    hazmat_model_path = LaunchConfiguration('hazmat_model',   default='')
 
     pkg_bringup = get_package_share_directory('rescue_bringup')
 
@@ -183,8 +187,10 @@ def generate_launch_description():
         ],
     )
 
-    # ── 8. object_detector — detección AprilTag + Hazmat + YOLO ──
-    object_detector_node = TimerAction(
+    # ── 8. object_detector — detección AprilTag + hazmat + YOLO ────
+    # Habilitar con: ros2 launch rescue_bringup slam.launch.py launch_detector:=true
+    # El parámetro hazmat_model apunta al modelo entrenado; si está vacío usa detector HSV.
+    detector_node = TimerAction(
         period=12.0,
         actions=[
             Node(
@@ -192,22 +198,25 @@ def generate_launch_description():
                 executable='object_detector',
                 name='object_detector',
                 output='screen',
+                condition=IfCondition(launch_detector),
                 parameters=[{
-                    'output_dir':        '/root/maps',
-                    'team_name':         'PedrosRescue',
-                    'mission':           'M1',
-                    'robot_name':        'Pedro',
-                    'mode':              'teleop',
-                    'yolo_model':        'yolov8n.pt',
-                    'enable_yolo':       True,
-                    'enable_apriltag':   True,
-                    'enable_hazmat':     True,
+                    'output_dir':    '/root/maps',
+                    'team_name':     'PedrosRescue',
+                    'mission':       'M1',
+                    'robot_name':    'Pedro',
+                    'mode':          'teleop',
+                    'yolo_model':    'yolov8n.pt',
+                    'hazmat_model':  hazmat_model_path,
+                    'hazmat_conf':   0.40,
+                    'enable_yolo':   True,
+                    'enable_apriltag': True,
+                    'enable_hazmat': True,
                 }],
             )
         ],
     )
 
-    # ── 9. RViz2 para visualización ──────────────────────────────
+    # ── 9. RViz2 para visualización (solo si launch_rviz:=true) ─────
     rviz_config = os.path.join(pkg_bringup, 'config', 'slam_rviz.rviz')
     rviz_node = TimerAction(
         period=3.0,
@@ -217,6 +226,7 @@ def generate_launch_description():
                 executable='rviz2',
                 name='rviz2',
                 output='screen',
+                condition=IfCondition(launch_rviz),
                 arguments=['-d', rviz_config] if os.path.exists(rviz_config) else [],
             )
         ],
@@ -233,6 +243,21 @@ def generate_launch_description():
             default_value='/dev/ttyUSB0',
             description='Puerto serie del LDRobot LD19',
         ),
+        DeclareLaunchArgument(
+            'launch_rviz',
+            default_value='true',
+            description='Lanzar RViz2 (false para Pi headless)',
+        ),
+        DeclareLaunchArgument(
+            'launch_detector',
+            default_value='false',
+            description='Lanzar object_detector (AprilTag + hazmat YOLO + objetos YOLO)',
+        ),
+        DeclareLaunchArgument(
+            'hazmat_model',
+            default_value='',
+            description='Ruta al modelo hazmat entrenado (.pt). Vacío = usar detector HSV',
+        ),
         robot_description_launch,
         lidar_launch,
         camera_launch,
@@ -240,6 +265,6 @@ def generate_launch_description():
         slam_lifecycle_manager,
         pc_accum_node,
         geotiff_node,
-        object_detector_node,
+        detector_node,
         rviz_node,
     ])

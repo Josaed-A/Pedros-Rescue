@@ -11,3 +11,17 @@ __pycache__/
 *.pyc
 .claude
 
+# Dataset de entrenamiento (>1GB, no va en git)
+datasets/
+
+# Checkpoints y resultados de entrenamiento
+training/runs/
+
+# Modelos base descargados automáticamente por ultralytics
+yolov8n.pt
+yolov8s.pt
+yolov8m.pt
+
+# El modelo entrenado final SÍ va en git (src/rescue_bringup/models/hazmat_yolo.pt)
+# para no ignorarlo accidentalmente:
+!src/rescue_bringup/models/

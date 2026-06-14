@@ -85,6 +85,12 @@ done
 [ -e /dev/bus/usb ] && DEVICE_ARGS+=(-v /dev/bus/usb:/dev/bus/usb:rw)
 
 # ── Construir imagen si no existe o si se pide rebuild ───────────
+if [ "$1" = "rebuild-pi" ]; then
+    echo "━━━ Construyendo imagen Pi (sin RViz/YOLO, ~8 min) ━━━"
+    podman build -t "$IMAGE" -f "$WORKSPACE/Dockerfile.pi" "$WORKSPACE"
+    echo "━━━ Imagen Pi construida ✅ ━━━"
+    exit 0
+fi
 if ! podman image exists "$IMAGE" || [ "$1" = "rebuild" ]; then
     echo "━━━ Construyendo imagen Docker (primera vez, ~5 min) ━━━"
     podman build -t "$IMAGE" "$WORKSPACE"
@@ -120,6 +126,68 @@ case "${1:-shell}" in
              ros2 launch rescue_bringup slam.launch.py"
         ;;
 
+    camera-pi)
+        # Publica la cámara Logitech en /robot/camera/front/image_raw/compressed
+        CMD="source /opt/ros/jazzy/setup.bash && \
+             source /workspace/install/setup.bash && \
+             echo '━━━ Publicando Logitech /dev/video0 ━━━' && \
+             ros2 run rescue_bringup logitech_pub --ros-args \
+               -p device:=0 -p fps:=15 -p jpeg_quality:=75"
+        ;;
+
+    logitech-vision)
+        # Logitech + object_detector (sin depth: detecta pero no localiza en 3D)
+        # Uso: ./scripts/run_slam_container.sh logitech-vision [device=2]
+        CAM_DEVICE="${2:-2}"
+        HAZMAT_MODEL="/workspace/src/rescue_bringup/models/hazmat_yolo.pt"
+        CMD="source /opt/ros/jazzy/setup.bash && \
+             source /workspace/install/setup.bash && \
+             echo '━━━ Logitech Vision (device=${CAM_DEVICE}) ━━━' && \
+             ros2 launch rescue_bringup logitech_vision.launch.py \
+               device:=${CAM_DEVICE} \
+               hazmat_model:=${HAZMAT_MODEL}"
+        ;;
+
+    vision-test)
+        # Prueba el detector de hazmat con la Logitech — sin SLAM
+        # Uso: ./scripts/run_slam_container.sh vision-test [device=2]
+        CAM_DEVICE="${2:-2}"
+        CMD="source /opt/ros/jazzy/setup.bash && \
+             source /workspace/install/setup.bash && \
+             echo '━━━ Prueba detector hazmat (Logitech /dev/video${CAM_DEVICE}) ━━━' && \
+             python3 /workspace/training/test_hazmat_camera.py --device ${CAM_DEVICE}"
+        ;;
+
+    vision)
+        # Cámara Orbbec + object_detector completo (AprilTag + hazmat YOLO + objetos)
+        HAZMAT_MODEL="/workspace/src/rescue_bringup/models/hazmat_yolo.pt"
+        CMD="source /opt/ros/jazzy/setup.bash && \
+             source /workspace/install/setup.bash && \
+             echo '━━━ Lanzando módulo de visión ━━━' && \
+             ros2 launch rescue_bringup vision.launch.py \
+               hazmat_model:=${HAZMAT_MODEL} \
+               launch_rviz:=true"
+        ;;
+
+    dashboard)
+        # Ground station — dashboard Tkinter en el PC
+        CMD="source /opt/ros/jazzy/setup.bash && \
+             source /workspace/install/setup.bash && \
+             echo '━━━ Lanzando Ground Station Dashboard ━━━' && \
+             ros2 launch rescue_command_station command_station.launch.py"
+        ;;
+
+    slam-pi)
+        # Modo headless para Raspberry Pi — sin RViz
+        CMD="source /opt/ros/jazzy/setup.bash && \
+             source /workspace/install/setup.bash && \
+             export LD_LIBRARY_PATH=/workspace/install/astra_camera/lib:\$LD_LIBRARY_PATH && \
+             export OPENNI2_REDIST=/workspace/install/astra_camera/lib && \
+             export OPENNI2_DRIVERS_PATH=/workspace/install/astra_camera/lib/OpenNI2/Drivers && \
+             echo '━━━ Lanzando SLAM headless (Pi) ━━━' && \
+             ros2 launch rescue_bringup slam.launch.py launch_rviz:=false"
+        ;;
+
     lidar)
         CMD="source /opt/ros/jazzy/setup.bash && \
              source /workspace/install/setup.bash && \
@@ -150,7 +218,8 @@ case "${1:-shell}" in
 
     rviz)
         CMD="source /opt/ros/jazzy/setup.bash && \
-             source /workspace/install/setup.bash && \
+             source /workspace/install/setup.bash 2>/dev/null || true && \
+             MESA_GL_VERSION_OVERRIDE=3.3 LIBGL_ALWAYS_SOFTWARE=0 \
              rviz2 -d /workspace/src/rescue_bringup/config/slam_rviz.rviz"
         ;;
 
@@ -189,6 +258,17 @@ esac
 echo "━━━ Dispositivos: ${DEVICE_ARGS[*]} ━━━"
 echo "━━━ Display: ${DISPLAY_ARGS[*]} ━━━"
 
+# ── CycloneDDS: forzar interfaz enp3s0 (Pi via ethernet) ─────────
+CYCLONE_XML="<CycloneDDS><Domain>\
+<General><Interfaces>\
+<NetworkInterface name=\"enp3s0\" multicast=\"false\"/>\
+</Interfaces></General>\
+<Discovery><Peers>\
+<Peer Address=\"10.42.0.240\"/>\
+<Peer Address=\"10.42.0.1\"/>\
+</Peers></Discovery>\
+</Domain></CycloneDDS>"
+
 # ── Lanzar contenedor ─────────────────────────────────────────────
 podman run -it --rm \
     --name "$CONTAINER" \
@@ -198,6 +278,7 @@ podman run -it --rm \
     "${DISPLAY_ARGS[@]}" \
     --env "ROS_DOMAIN_ID=0" \
     --env "RCUTILS_COLORIZED_OUTPUT=1" \
+    --env "CYCLONEDDS_URI=${CYCLONE_XML}" \
     -v "$WORKSPACE:/workspace:z" \
     -v "/home/$(whoami)/maps:/root/maps:z" \
     "$IMAGE" \

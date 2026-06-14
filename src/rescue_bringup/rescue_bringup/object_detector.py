@@ -5,7 +5,8 @@ Detecta objetos de interés RoboCup Rescue 2026 y genera el CSV de detecciones.
 
 Detectores implementados:
   1. AprilTag Standard41h12 → tipo 'ar_code'        (1 pt)
-  2. Hazmat signs (diamante naranja HSV)   → tipo 'hazmat_sign'   (2 pts)
+  2. Hazmat signs via YOLO custom (49 clases) → tipo 'hazmat_sign'  (2 pts)
+     Fallback: detector HSV (naranja) si no hay modelo entrenado.
   3. Objetos físicos via YOLO (ultralytics): → tipo 'real_object'  (10 pts)
         backpack, hard hat, fire extinguisher, person (víctima), bottle
 
@@ -34,7 +35,7 @@ from typing import Dict, List, Optional, Tuple
 import numpy as np
 import rclpy
 from rclpy.node import Node
-from sensor_msgs.msg import Image, CameraInfo
+from sensor_msgs.msg import Image, CameraInfo, CompressedImage
 from std_msgs.msg import String as StringMsg
 from std_srvs.srv import Trigger
 from visualization_msgs.msg import Marker, MarkerArray
@@ -100,15 +101,34 @@ class ObjectDetector(Node):
     def __init__(self):
         super().__init__('object_detector')
 
-        self.declare_parameter('output_dir',  '/root/maps')
-        self.declare_parameter('team_name',   'PedrosRescue')
-        self.declare_parameter('mission',     'M1')
-        self.declare_parameter('robot_name',  'Pedro')
-        self.declare_parameter('mode',        'teleop')
-        self.declare_parameter('yolo_model',  'yolov8n.pt')
-        self.declare_parameter('enable_yolo', True)
+        self.declare_parameter('output_dir',     '/root/maps')
+        self.declare_parameter('team_name',      'PedrosRescue')
+        self.declare_parameter('mission',        'M1')
+        self.declare_parameter('robot_name',     'Pedro')
+        self.declare_parameter('mode',           'teleop')
+        self.declare_parameter('yolo_model',     'yolov8n.pt')
+        self.declare_parameter('hazmat_model',   '')
+        self.declare_parameter('hazmat_conf',    0.40)
+        self.declare_parameter('enable_yolo',    True)
         self.declare_parameter('enable_apriltag', True)
-        self.declare_parameter('enable_hazmat', True)
+        self.declare_parameter('enable_hazmat',  True)
+
+        # ── Configuración de topics (compatible con ambos drivers) ──
+        # use_compressed=false → driver oficial astra_camera / orbbec_camera (raw Image)
+        # use_compressed=true  → driver del compañero astra_rgbd_camera_node (CompressedImage)
+        self.declare_parameter('use_compressed',     False)
+        self.declare_parameter('color_topic',        '/camera/color/image_raw')
+        self.declare_parameter('depth_topic',        '/camera/depth/image_raw')
+        self.declare_parameter('camera_info_topic',  '/camera/color/camera_info')
+        # require_depth=false → detecta sin profundidad (x=y=z=0), útil con Logitech
+        self.declare_parameter('require_depth',      True)
+        # Intrínsecos de la Astra Pro (fallback cuando no hay CameraInfo)
+        self.declare_parameter('fx',           525.0)
+        self.declare_parameter('fy',           525.0)
+        self.declare_parameter('cx',           319.5)
+        self.declare_parameter('cy',           239.5)
+        # depth_scale: factor mm→m para la profundidad del compañero (uint16 → metros)
+        self.declare_parameter('depth_scale',  0.001)
 
         if not _CV2_OK:
             self.get_logger().fatal('OpenCV (cv2) no encontrado — instala python3-opencv')
@@ -136,29 +156,29 @@ class ObjectDetector(Node):
         self._tf_listener = tf2_ros.TransformListener(self._tf_buf, self)
 
         # AprilTag detector (OpenCV aruco)
+        # DICT_APRILTAG_41h12 = 21 (some OpenCV ARM builds omit the named constant)
+        _APRILTAG_DICT = getattr(cv2.aruco, 'DICT_APRILTAG_41h12', 21)
         self._aruco_detector = None
         if _CV2_OK and self.get_parameter('enable_apriltag').value:
             try:
-                aruco_dict = cv2.aruco.getPredefinedDictionary(
-                    cv2.aruco.DICT_APRILTAG_41h12)
+                aruco_dict = cv2.aruco.getPredefinedDictionary(_APRILTAG_DICT)
                 params = cv2.aruco.DetectorParameters()
                 self._aruco_detector = cv2.aruco.ArucoDetector(aruco_dict, params)
                 self.get_logger().info('AprilTag detector (41h12) activo')
             except AttributeError:
                 # OpenCV < 4.7: API antigua
-                self._aruco_dict = cv2.aruco.Dictionary_get(
-                    cv2.aruco.DICT_APRILTAG_41h12)
+                self._aruco_dict = cv2.aruco.Dictionary_get(_APRILTAG_DICT)
                 self._aruco_params = cv2.aruco.DetectorParameters_create()
                 self._aruco_detector = 'legacy'
                 self.get_logger().info('AprilTag detector (41h12 legacy API) activo')
 
-        # YOLO model
+        # YOLO model (objetos COCO: personas, mochilas, etc.)
         self._yolo = None
         if _YOLO_OK and self.get_parameter('enable_yolo').value:
             model_path = self.get_parameter('yolo_model').value
             try:
                 self._yolo = _YOLO(model_path)
-                self.get_logger().info(f'YOLO model cargado: {model_path}')
+                self.get_logger().info(f'YOLO (objetos) cargado: {model_path}')
             except Exception as exc:
                 self.get_logger().warn(f'No se pudo cargar YOLO ({model_path}): {exc}')
         elif not _YOLO_OK and self.get_parameter('enable_yolo').value:
@@ -166,30 +186,55 @@ class ObjectDetector(Node):
                 'ultralytics no instalado — detección YOLO desactivada. '
                 'Instala con: pip3 install ultralytics')
 
+        # Modelo hazmat entrenado (reemplaza detector HSV cuando está disponible)
+        self._hazmat_yolo = None
+        hazmat_model_path = self.get_parameter('hazmat_model').value
+        if _YOLO_OK and self.get_parameter('enable_hazmat').value and hazmat_model_path:
+            if os.path.exists(hazmat_model_path):
+                try:
+                    self._hazmat_yolo = _YOLO(hazmat_model_path)
+                    self.get_logger().info(f'YOLO (hazmat) cargado: {hazmat_model_path}')
+                except Exception as exc:
+                    self.get_logger().warn(f'No se pudo cargar hazmat YOLO: {exc}')
+            else:
+                self.get_logger().warn(
+                    f'hazmat_model no encontrado: {hazmat_model_path} — usando detector HSV')
+
         # Publicadores
         self._det_pub = self.create_publisher(StringMsg, '/object_detections', 10)
         self._marker_pub = self.create_publisher(
             MarkerArray, '/object_detection_markers', 10)
 
-        # Suscripciones
-        self.create_subscription(
-            CameraInfo, '/camera/color/camera_info', self._on_cam_info, 5)
-        self.create_subscription(
-            Image, '/camera/color/image_raw', self._on_color, 5)
-        self.create_subscription(
-            Image, '/camera/depth/image_raw', self._on_depth, 5)
+        # ── Suscripciones — raw o compressed según el driver ─────────
+        use_compressed   = self.get_parameter('use_compressed').value
+        color_topic      = self.get_parameter('color_topic').value
+        depth_topic      = self.get_parameter('depth_topic').value
+        cam_info_topic   = self.get_parameter('camera_info_topic').value
+
+        self.create_subscription(CameraInfo, cam_info_topic, self._on_cam_info, 5)
+
+        if use_compressed:
+            self.create_subscription(
+                CompressedImage, color_topic, self._on_color_compressed, 5)
+            self.create_subscription(
+                CompressedImage, depth_topic, self._on_depth_compressed, 5)
+            self.get_logger().info(
+                f'Modo COMPRESSED — color: {color_topic}  depth: {depth_topic}')
+        else:
+            self.create_subscription(Image, color_topic, self._on_color, 5)
+            self.create_subscription(Image, depth_topic, self._on_depth, 5)
+            self.get_logger().info(
+                f'Modo RAW — color: {color_topic}  depth: {depth_topic}')
 
         # Servicio de guardado
         self.create_service(Trigger, '/save_detection_csv', self._on_save_csv)
 
+        hazmat_mode = 'YOLO' if self._hazmat_yolo else ('HSV' if self.get_parameter('enable_hazmat').value else '✗')
         self.get_logger().info(
             'ObjectDetector activo\n'
-            '  AprilTag: '
-            + ('✓' if self._aruco_detector else '✗') +
-            '  Hazmat: '
-            + ('✓' if self.get_parameter('enable_hazmat').value else '✗') +
-            '  YOLO: '
-            + ('✓' if self._yolo else '✗')
+            '  AprilTag : ' + ('✓' if self._aruco_detector else '✗') + '\n'
+            '  Hazmat   : ' + hazmat_mode + '\n'
+            '  YOLO obj : ' + ('✓' if self._yolo else '✗')
         )
 
     # ─── Start time ───────────────────────────────────────────────
@@ -221,6 +266,51 @@ class ObjectDetector(Node):
         except Exception:
             pass
 
+    def _on_depth_compressed(self, msg: CompressedImage) -> None:
+        """Decodifica el depth PNG uint16 del astra_rgbd_camera_node del compañero."""
+        try:
+            buf = np.frombuffer(msg.data, dtype=np.uint8)
+            arr = cv2.imdecode(buf, cv2.IMREAD_UNCHANGED)
+            if arr is None:
+                return
+            scale = float(self.get_parameter('depth_scale').value)
+            self._depth_img = arr.astype(np.float32) * scale  # uint16 mm → float32 m
+        except Exception:
+            pass
+
+    def _on_color_compressed(self, msg: CompressedImage) -> None:
+        """Decodifica el color JPEG del astra_rgbd_camera_node del compañero y lo procesa."""
+        now = self.get_clock().now().nanoseconds * 1e-9
+        if now - self._last_detect_time < DETECT_INTERVAL:
+            return
+        self._last_detect_time = now
+
+        try:
+            buf = np.frombuffer(msg.data, dtype=np.uint8)
+            bgr = cv2.imdecode(buf, cv2.IMREAD_COLOR)
+        except Exception:
+            return
+        if bgr is None:
+            return
+
+        self._color_img = bgr
+        detections = []
+
+        if self._aruco_detector and self.get_parameter('enable_apriltag').value:
+            detections += self._detect_apriltags(bgr)
+
+        if self.get_parameter('enable_hazmat').value:
+            if self._hazmat_yolo:
+                detections += self._detect_hazmat_yolo(bgr)
+            else:
+                detections += self._detect_hazmat_hsv(bgr)
+
+        if self._yolo and self.get_parameter('enable_yolo').value:
+            detections += self._detect_yolo(bgr)
+
+        for det in detections:
+            self._process_detection(det)
+
     def _on_color(self, msg: Image) -> None:
         now = self.get_clock().now().nanoseconds * 1e-9
         if now - self._last_detect_time < DETECT_INTERVAL:
@@ -242,7 +332,10 @@ class ObjectDetector(Node):
             detections += self._detect_apriltags(bgr)
 
         if self.get_parameter('enable_hazmat').value:
-            detections += self._detect_hazmat(bgr)
+            if self._hazmat_yolo:
+                detections += self._detect_hazmat_yolo(bgr)
+            else:
+                detections += self._detect_hazmat_hsv(bgr)
 
         if self._yolo and self.get_parameter('enable_yolo').value:
             detections += self._detect_yolo(bgr)
@@ -281,15 +374,35 @@ class ObjectDetector(Node):
 
         return results
 
-    def _detect_hazmat(self, bgr: np.ndarray) -> List[dict]:
-        """Detecta señales hazmat (diamante naranja) por color HSV + forma."""
+    def _detect_hazmat_yolo(self, bgr: np.ndarray) -> List[dict]:
+        """Detecta señales hazmat con el modelo YOLO entrenado (49 clases)."""
+        results_out = []
+        conf = float(self.get_parameter('hazmat_conf').value)
+        try:
+            res = self._hazmat_yolo(bgr, conf=conf, verbose=False)
+            for r in res:
+                for box in r.boxes:
+                    cls_name = self._hazmat_yolo.names[int(box.cls[0])]
+                    x1, y1, x2, y2 = box.xyxy[0].tolist()
+                    cx = int((x1 + x2) / 2)
+                    cy = int((y1 + y2) / 2)
+                    results_out.append({
+                        'type': 'hazmat_sign',
+                        'name': cls_name.replace(' ', '_')[:20],
+                        'u': cx, 'v': cy,
+                    })
+        except Exception as exc:
+            self.get_logger().debug(f'Hazmat YOLO error: {exc}')
+        return results_out
+
+    def _detect_hazmat_hsv(self, bgr: np.ndarray) -> List[dict]:
+        """Fallback: detecta señales hazmat (diamante naranja) por color HSV + forma."""
         hsv = cv2.cvtColor(bgr, cv2.COLOR_BGR2HSV)
 
         lo = np.array([HAZMAT_H_LO, HAZMAT_S_LO, HAZMAT_V_LO], dtype=np.uint8)
         hi = np.array([HAZMAT_H_HI, 255, 255], dtype=np.uint8)
         mask = cv2.inRange(hsv, lo, hi)
 
-        # Limpieza morfológica
         kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
         mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel)
         mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel)
@@ -302,7 +415,6 @@ class ObjectDetector(Node):
             area = cv2.contourArea(cnt)
             if area < HAZMAT_AREA_MIN:
                 continue
-            # Verificar que sea aproximadamente un diamante (4 vértices, rotado ~45°)
             hull = cv2.convexHull(cnt)
             approx = cv2.approxPolyDP(hull, 0.1 * cv2.arcLength(hull, True), True)
             if len(approx) not in (3, 4, 5):
@@ -363,11 +475,17 @@ class ObjectDetector(Node):
             return None
         depth = float(np.median(valid))
 
-        # Proyección inversa con intrínsecos
-        fx = self._cam_info.k[0]
-        fy = self._cam_info.k[4]
-        cx = self._cam_info.k[2]
-        cy = self._cam_info.k[5]
+        # Proyección inversa — usa CameraInfo si está disponible, si no los parámetros
+        if self._cam_info is not None:
+            fx = self._cam_info.k[0]
+            fy = self._cam_info.k[4]
+            cx = self._cam_info.k[2]
+            cy = self._cam_info.k[5]
+        else:
+            fx = float(self.get_parameter('fx').value)
+            fy = float(self.get_parameter('fy').value)
+            cx = float(self.get_parameter('cx').value)
+            cy = float(self.get_parameter('cy').value)
         if fx == 0 or fy == 0:
             return None
 
@@ -401,9 +519,11 @@ class ObjectDetector(Node):
         """Valida, deduplica y registra una detección."""
         pos = self._pixel_to_3d_map(det['u'], det['v'])
         if pos is None:
-            return
-
-        x, y, z = pos
+            if self.get_parameter('require_depth').value:
+                return
+            x, y, z = 0.0, 0.0, 0.0
+        else:
+            x, y, z = pos
 
         # Deduplicación: misma clase a < DEDUP_DIST m
         for existing in self._detections:
@@ -498,7 +618,8 @@ class ObjectDetector(Node):
     def _on_save_csv(self, _req, resp: Trigger.Response) -> Trigger.Response:
         if not self._detections:
             resp.success = True
-            resp.message = 'Sin detecciones — CSV vacío generado'
+            resp.message = 'Sin detecciones — nada que exportar'
+            return resp
 
         try:
             path = self._export_csv()
