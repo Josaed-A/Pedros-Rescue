@@ -18,11 +18,10 @@ class LogitechPublisher(Node):
         self._fps  = self.get_parameter('fps').value
         self._qual = self.get_parameter('jpeg_quality').value
 
-        # Usar ruta explícita para evitar problemas de índice dentro de container
-        dev_path = f'/dev/video{dev}' if isinstance(dev, int) else str(dev)
-        self._cap = cv2.VideoCapture(dev_path, cv2.CAP_V4L2)
+        dev_index = dev if isinstance(dev, int) else int(dev)
+        self._cap = cv2.VideoCapture(dev_index, cv2.CAP_V4L2)
         if not self._cap.isOpened():
-            self.get_logger().error(f'No se pudo abrir {dev_path}')
+            self.get_logger().error(f'No se pudo abrir /dev/video{dev_index}')
             return
 
         self._cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)

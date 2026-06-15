@@ -328,6 +328,7 @@ podman run -it --rm --replace \
     "${DISPLAY_ARGS[@]}" \
     "${PODMAN_SOCK_ARGS[@]}" \
     --env "ROS_DOMAIN_ID=0" \
+    --env "RMW_IMPLEMENTATION=rmw_cyclonedds_cpp" \
     --env "RCUTILS_COLORIZED_OUTPUT=1" \
     --env "CYCLONEDDS_URI=${CYCLONE_XML}" \
     -v "$WORKSPACE:/workspace:z" \

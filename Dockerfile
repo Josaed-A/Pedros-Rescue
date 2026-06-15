@@ -54,6 +54,7 @@ RUN apt-get update && apt-get install -y \
     ros-jazzy-tf2-eigen \
     ros-jazzy-tf2-sensor-msgs \
     ros-jazzy-class-loader \
+    ros-jazzy-rmw-cyclonedds-cpp \
     python3-opencv \
     python3-pip \
     && rm -rf /var/lib/apt/lists/*

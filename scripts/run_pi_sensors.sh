@@ -96,12 +96,18 @@ case "${1:-sensors}" in
         ;;
 esac
 
-CMD="source /opt/ros/jazzy/setup.bash && \
+CMD="chmod a+rw /dev/video* 2>/dev/null || true && \
+     source /opt/ros/jazzy/setup.bash && \
      source /workspace/install/setup.bash && \
      echo '━━━ Sensores Pi: LD19 + Orbbec Astra Pro ━━━' && \
      ros2 launch rescue_bringup pi_sensors.launch.py ${LAUNCH_ARGS}"
 
 echo "━━━ Dispositivos: ${DEVICE_ARGS[*]} ━━━"
+
+# ── Permisos V4L2: rootless Podman no hereda grupos del host ──────
+for _vid in /dev/video*; do
+    [ -e "$_vid" ] && chmod a+rw "$_vid" 2>/dev/null || true
+done
 
 # ── Lanzar contenedor ─────────────────────────────────────────────
 podman run -it --rm --replace \

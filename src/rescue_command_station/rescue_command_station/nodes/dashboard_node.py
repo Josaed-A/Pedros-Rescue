@@ -933,7 +933,11 @@ else:
     def update_video_image(self, frame, label, photo_attr, max_w, max_h):
         if frame is None:
             return
-        png_data = bgr_frame_to_png_data(frame, max_width=max_w, max_height=max_h)
+        w = label.winfo_width()
+        h = label.winfo_height()
+        target_w = w if w > 10 else max_w
+        target_h = h if h > 10 else max_h
+        png_data = bgr_frame_to_png_data(frame, max_width=target_w, max_height=target_h)
         if png_data is None:
             return
         photo = tk.PhotoImage(data=png_data, format='png')

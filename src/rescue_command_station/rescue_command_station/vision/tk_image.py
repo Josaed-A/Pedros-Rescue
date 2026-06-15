@@ -22,13 +22,14 @@ def resize_to_fit(frame, max_width, max_height):
     if width <= 0 or height <= 0:
         return frame
 
-    scale = min(max_width / width, max_height / height, 1.0)
+    scale = min(max_width / width, max_height / height)
 
-    if scale >= 1.0:
+    if abs(scale - 1.0) < 0.01:
         return frame
 
-    target_size = (int(width * scale), int(height * scale))
-    return cv2.resize(frame, target_size, interpolation=cv2.INTER_AREA)
+    target_size = (max(1, int(width * scale)), max(1, int(height * scale)))
+    interp = cv2.INTER_AREA if scale < 1.0 else cv2.INTER_LINEAR
+    return cv2.resize(frame, target_size, interpolation=interp)
 
 
 def depth_frame_to_color(depth_frame):

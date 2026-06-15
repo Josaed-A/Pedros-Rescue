@@ -30,6 +30,7 @@ from launch.actions import (
 from launch.conditions import IfCondition
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration
+from launch_ros.actions import Node
 
 
 def generate_launch_description():
@@ -69,6 +70,26 @@ def generate_launch_description():
         ],
     )
 
+    # ── 3b. Republish Astra color como CompressedImage en /robot/camera/astra/ ──
+    astra_republish = TimerAction(
+        period=5.0,
+        actions=[
+            Node(
+                package='image_transport',
+                executable='republish',
+                name='astra_color_republish',
+                output='screen',
+                arguments=['raw', 'compressed'],
+                remappings=[
+                    ('in', '/camera/color/image_raw'),
+                    ('out/compressed', '/robot/camera/astra/color/image_raw/compressed'),
+                ],
+                parameters=[{'jpeg_quality': 70}],
+                condition=IfCondition(launch_camera),
+            )
+        ],
+    )
+
     # ── 4+5. Logitech frontal + detector de objetos (YOLO + hazmat) ─
     logitech_launch = TimerAction(
         period=6.0,
@@ -78,7 +99,7 @@ def generate_launch_description():
                     os.path.join(pkg_bringup, 'launch', 'logitech_vision.launch.py')
                 ),
                 launch_arguments={
-                    'device':        '2',
+                    'device':        '0',
                     'fps':           '15',
                     'hazmat_model':  hazmat_model,
                     'enable_yolo':   'true',
@@ -112,5 +133,6 @@ def generate_launch_description():
         robot_description_launch,
         lidar_launch,
         camera_launch,
+        astra_republish,
         logitech_launch,
     ])
