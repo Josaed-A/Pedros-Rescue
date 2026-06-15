@@ -296,6 +296,24 @@ CYCLONE_XML="<CycloneDDS><Domain>\
 </Peers></Discovery>\
 </Domain></CycloneDDS>"
 
+# ── Podman socket (solo para dashboard — permite lanzar rviz2 en pedros_slam) ──
+PODMAN_SOCK_ARGS=()
+if [ "${1:-}" = "dashboard" ]; then
+    PDMN_SOCK="/run/user/$(id -u)/podman/podman.sock"
+    systemctl --user start podman.socket 2>/dev/null || true
+    # Esperar hasta 3 s a que el socket aparezca
+    for _i in 1 2 3; do
+        [ -S "$PDMN_SOCK" ] && break
+        sleep 1
+    done
+    if [ -S "$PDMN_SOCK" ]; then
+        PODMAN_SOCK_ARGS=(-v "${PDMN_SOCK}:/tmp/podman.sock:rw")
+        echo "━━━ Podman socket montado para control de RViz ━━━"
+    else
+        echo "━━━ AVISO: no se pudo montar podman socket; boton RVIZ no funcionara ━━━"
+    fi
+fi
+
 # ── Lanzar contenedor ─────────────────────────────────────────────
 podman run -it --rm --replace \
     --name "$CONTAINER" \
@@ -303,6 +321,7 @@ podman run -it --rm --replace \
     --privileged \
     "${DEVICE_ARGS[@]}" \
     "${DISPLAY_ARGS[@]}" \
+    "${PODMAN_SOCK_ARGS[@]}" \
     --env "ROS_DOMAIN_ID=0" \
     --env "RCUTILS_COLORIZED_OUTPUT=1" \
     --env "CYCLONEDDS_URI=${CYCLONE_XML}" \

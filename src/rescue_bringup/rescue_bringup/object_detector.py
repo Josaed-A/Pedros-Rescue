@@ -204,6 +204,8 @@ class ObjectDetector(Node):
         self._det_pub = self.create_publisher(StringMsg, '/object_detections', 10)
         self._marker_pub = self.create_publisher(
             MarkerArray, '/object_detection_markers', 10)
+        self._annotated_pub = self.create_publisher(
+            CompressedImage, '/camera/color/image_annotated/compressed', 1)
 
         # ── Suscripciones — raw o compressed según el driver ─────────
         use_compressed   = self.get_parameter('use_compressed').value
@@ -308,6 +310,8 @@ class ObjectDetector(Node):
         if self._yolo and self.get_parameter('enable_yolo').value:
             detections += self._detect_yolo(bgr)
 
+        self._publish_annotated_frame(bgr, detections)
+
         for det in detections:
             self._process_detection(det)
 
@@ -340,6 +344,8 @@ class ObjectDetector(Node):
         if self._yolo and self.get_parameter('enable_yolo').value:
             detections += self._detect_yolo(bgr)
 
+        self._publish_annotated_frame(bgr, detections)
+
         for det in detections:
             self._process_detection(det)
 
@@ -368,6 +374,8 @@ class ObjectDetector(Node):
                     'type': 'ar_code',
                     'name': str(int(tag_id)),
                     'u': cx, 'v': cy,
+                    'x1': int(c[:, 0].min()), 'y1': int(c[:, 1].min()),
+                    'x2': int(c[:, 0].max()), 'y2': int(c[:, 1].max()),
                 })
         except Exception as exc:
             self.get_logger().debug(f'AprilTag error: {exc}')
@@ -390,6 +398,7 @@ class ObjectDetector(Node):
                         'type': 'hazmat_sign',
                         'name': cls_name.replace(' ', '_')[:20],
                         'u': cx, 'v': cy,
+                        'x1': int(x1), 'y1': int(y1), 'x2': int(x2), 'y2': int(y2),
                     })
         except Exception as exc:
             self.get_logger().debug(f'Hazmat YOLO error: {exc}')
@@ -425,10 +434,12 @@ class ObjectDetector(Node):
                 continue
             cx = int(M['m10'] / M['m00'])
             cy = int(M['m01'] / M['m00'])
+            bx, by, bw, bh = cv2.boundingRect(cnt)
             results.append({
                 'type': 'hazmat_sign',
                 'name': 'HZ',
                 'u': cx, 'v': cy,
+                'x1': bx, 'y1': by, 'x2': bx + bw, 'y2': by + bh,
             })
 
         return results
@@ -450,10 +461,39 @@ class ObjectDetector(Node):
                         'type': 'real_object',
                         'name': YOLO_TARGET_CLASSES[cls_name],
                         'u': cx, 'v': cy,
+                        'x1': int(x1), 'y1': int(y1), 'x2': int(x2), 'y2': int(y2),
                     })
         except Exception as exc:
             self.get_logger().debug(f'YOLO error: {exc}')
         return results_out
+
+    # ─── Imagen anotada ──────────────────────────────────────────
+
+    def _publish_annotated_frame(self, bgr: np.ndarray, detections: list) -> None:
+        if self._annotated_pub.get_subscription_count() == 0:
+            return
+        _COLORS = {
+            'ar_code':     (0, 220, 255),
+            'hazmat_sign': (0, 120, 255),
+            'real_object': (60, 60, 255),
+        }
+        annotated = bgr.copy()
+        for det in detections:
+            color = _COLORS.get(det['type'], (200, 200, 200))
+            x1 = det.get('x1', det['u'] - 20)
+            y1 = det.get('y1', det['v'] - 20)
+            x2 = det.get('x2', det['u'] + 20)
+            y2 = det.get('y2', det['v'] + 20)
+            cv2.rectangle(annotated, (x1, y1), (x2, y2), color, 2)
+            label = f"{det['type']} {det['name']}"
+            cv2.putText(annotated, label, (x1, max(y1 - 5, 12)),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.48, color, 1, cv2.LINE_AA)
+        _, buf = cv2.imencode('.jpg', annotated, [cv2.IMWRITE_JPEG_QUALITY, 75])
+        out = CompressedImage()
+        out.header.stamp = self.get_clock().now().to_msg()
+        out.format = 'jpeg'
+        out.data = buf.tobytes()
+        self._annotated_pub.publish(out)
 
     # ─── Localización 3D y registro ──────────────────────────────
 

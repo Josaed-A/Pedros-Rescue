@@ -157,8 +157,8 @@ def generate_launch_description():
                 name='pointcloud_accumulator',
                 output='screen',
                 parameters=[{
-                    'output_dir':  '/root/maps',
-                    'team_name':   'PedrosRescue',
+                    'output_dir':  '/workspace/maps',
+                    'team_name':   'SabanaHerons',
                     'mission':     'M1',
                     'voxel_size':  0.02,
                     'max_range':   4.0,
@@ -181,8 +181,8 @@ def generate_launch_description():
                 name='geotiff_writer',
                 output='screen',
                 parameters=[{
-                    'output_dir':  '/root/maps',
-                    'team_name':   'PedrosRescue',
+                    'output_dir':  '/workspace/maps',
+                    'team_name':   'SabanaHerons',
                     'mission':     'M1',
                     'path_step_m': 0.08,
                 }],
@@ -203,8 +203,8 @@ def generate_launch_description():
                 output='screen',
                 condition=IfCondition(launch_detector),
                 parameters=[{
-                    'output_dir':    '/root/maps',
-                    'team_name':     'PedrosRescue',
+                    'output_dir':    '/workspace/maps',
+                    'team_name':     'SabanaHerons',
                     'mission':       'M1',
                     'robot_name':    'Pedro',
                     'mode':          'teleop',
