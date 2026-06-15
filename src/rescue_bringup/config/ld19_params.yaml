@@ -13,7 +13,7 @@
       # Puerto serie del lidar.
       # Crea un regla udev para fijar el nombre del dispositivo:
       #   SUBSYSTEM=="tty", ATTRS{idVendor}=="0403", SYMLINK+="ldlidar"
-      # GPIO UART: disable-bt overlay libera PL011 en GPIO14/15 → /dev/ttyAMA0
+      # Pi 5 con dtoverlay=uart0-pi5: GPIO14(TX)/GPIO15(RX) → /dev/ttyAMA0
       # USB fallback: cambiar a /dev/ttyUSB0 si se usa adaptador USB-serial
       serial_port: '/dev/ttyAMA0'
       baudrate: 230400          # LD19 siempre usa 230400 baud

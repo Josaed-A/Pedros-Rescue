@@ -1,230 +1,183 @@
-# Como ejecutar Pedro's Rescue
+# Como ejecutar Pedro's Rescue (RoboCup 2026)
 
-Esta guia asume que el repo ya esta en la PC y en la Raspberry, y que ROS 2 ya esta instalado.
+Stack completo: Raspberry Pi 5 (sensores) + PC (SLAM + RViz + Dashboard).
 
-Reemplaza `<distro>` por tu version de ROS 2, por ejemplo `humble` o `jazzy`.
+---
 
-## 1. Red ROS 2
+## Arquitectura
 
-El WiFi que usa el robot no entrega multicast de forma confiable, asi que el
-descubrimiento normal de DDS NO funciona entre la PC y la Raspberry. Se usa
-un Fast DDS Discovery Server corriendo en la Raspberry.
+```
+Raspberry Pi 5  ─── ethernet ──→  PC Ubuntu
+  10.42.0.240                      10.42.0.1
 
-En la Raspberry (ya configurado en crontab `@reboot`):
-
-```bash
-fastdds discovery -i 0 -l 0.0.0.0 -p 11811
+Pi publica:                     PC consume:
+  /ldlidar_node/scan   ───────→  slam_toolbox
+  /camera/depth/points ───────→  RViz (nube 3D)
+  /camera/color/image_raw ───→  RViz (imagen)
+  /camera/depth/image_raw ───→  RViz (profundidad)
 ```
 
-En la PC y en la Raspberry (ya agregado al `~/.bashrc` de ambas):
+---
 
+## Paso 1 — Conexión ethernet PC ↔ Pi
+
+PC IP: `10.42.0.1/24`  
+Pi IP: `10.42.0.240/24` (fija, configurada en NetworkManager)
+
+Verificar:
 ```bash
-export ROS_DISCOVERY_SERVER=<IP_DE_LA_RASPBERRY>:11811
+ping 10.42.0.240
 ```
 
-IMPORTANTE: si la IP de la Raspberry cambia (es DHCP), hay que actualizar
-esta variable en el `~/.bashrc` de las dos maquinas. IP actual: `192.168.231.137`.
+---
 
-Para que los comandos `ros2 topic list/echo/hz` vean todos los topicos en
-modo discovery server, usa ademas:
+## Paso 2 — Pi: lanzar sensores
 
-```bash
-export ROS_SUPER_CLIENT=TRUE
-ros2 daemon stop   # reinicia el daemon con las variables nuevas
-```
-
-Nota: `ros2 topic echo/hz` por defecto se suscriben RELIABLE; las camaras
-publican BEST_EFFORT. Para probar a mano agrega `--qos-reliability best_effort`.
-
-## 2. Dependencias
-
-### PC
-
-Dependencias apt/ROS:
+SSH a la Pi y ejecutar en tmux:
 
 ```bash
-sudo apt install $(grep -vE '^\s*(#|$)' system_requirements_pc.txt | sed "s/<distro>/$ROS_DISTRO/g")
+ssh sraus@10.42.0.240     # pass: 123456
+tmux new -s sensors        # o: tmux attach -t sensors
 ```
 
-Dependencias pip:
+**Opción A — Nativo (recomendado, inmediato):**
+```bash
+source /opt/ros/jazzy/setup.bash
+source ~/pedros/install/setup.bash
+export RMW_IMPLEMENTATION=rmw_cyclonedds_cpp
+export CYCLONEDDS_URI="<CycloneDDS><Domain><General><Interfaces><NetworkInterface name=\"eth0\" multicast=\"false\"/></Interfaces></General><Discovery><Peers><Peer Address=\"10.42.0.1\"/></Peers></Discovery></Domain></CycloneDDS>"
+ros2 launch rescue_bringup pi_sensors.launch.py
+```
+
+**Opción B — Contenedor (después de reconstruir imagen):**
+```bash
+chmod +x ~/pedros/scripts/run_pi_sensors.sh
+~/pedros/scripts/run_pi_sensors.sh
+```
+
+**Opción C — Desde el PC via SSH (un solo comando):**
+```bash
+cd ~/Escritorio/PROYECTOS/Pedros-Rescue
+./scripts/run_slam_container.sh pi
+```
+
+Verificar que los topics están publicando:
+```bash
+source /opt/ros/jazzy/setup.bash && source ~/pedros/install/setup.bash
+export RMW_IMPLEMENTATION=rmw_cyclonedds_cpp
+ros2 topic list | grep -E "scan|depth|color|point"
+```
+Debe aparecer:
+- `/ldlidar_node/scan`
+- `/camera/depth/points`
+- `/camera/color/image_raw`
+- `/camera/depth/image_raw`
+
+---
+
+## Paso 3 — PC: lanzar SLAM + RViz
 
 ```bash
-python3 -m pip install -r requirements_pc.txt
+cd ~/Escritorio/PROYECTOS/Pedros-Rescue
+./scripts/run_slam_container.sh slam
 ```
 
-### Raspberry
+Esto abre RViz con:
+- Mapa SLAM construyéndose en tiempo real
+- Nube de puntos 3D Orbbec (coloreada por altura)
+- Scan del lidar LD19
+- Modelo del robot
 
-Dependencias apt/ROS/hardware:
+---
+
+## Paso 4 — PC: lanzar Dashboard (opcional, ventana separada)
 
 ```bash
-sudo apt install $(grep -vE '^\s*(#|$)' system_requirements_raspberry.txt | sed "s/<distro>/$ROS_DISTRO/g")
+cd ~/Escritorio/PROYECTOS/Pedros-Rescue
+./scripts/run_slam_container.sh dashboard
 ```
 
-Dependencias pip:
+---
+
+## Resumen comandos `run_slam_container.sh`
+
+| Comando | Qué hace |
+|---|---|
+| `slam` | SLAM + RViz en PC (sin lidar/cámara) |
+| `dashboard` | Ground station GUI en PC |
+| `pi` | SSH → lanza sensores en Pi via contenedor |
+| `pi-lidar` | SSH → solo lidar en Pi |
+| `pi-camera` | SSH → solo cámara Orbbec en Pi |
+| `pi-stop` | SSH → detiene contenedor de sensores |
+| `pi-logs` | SSH → ver logs del contenedor Pi |
+| `pi-build` | SSH → compila workspace en contenedor Pi |
+| `build` | Compila workspace en contenedor PC |
+| `rebuild-pi` | Reconstruye imagen Docker para Pi |
+| `save-map` | Guarda mapa `.pgm` + `.yaml` |
+| `save-mission` | Guarda GeoTIFF + PLY + CSV de misión |
+| `topics` | Lista todos los topics activos |
+
+---
+
+## Resumen comandos `run_pi_sensors.sh` (en Pi)
+
+| Comando | Qué hace |
+|---|---|
+| `./run_pi_sensors.sh` | Lidar + cámara Orbbec (completo) |
+| `./run_pi_sensors.sh lidar` | Solo lidar LD19 |
+| `./run_pi_sensors.sh camera` | Solo cámara Orbbec |
+| `./run_pi_sensors.sh stop` | Detener contenedor |
+| `./run_pi_sensors.sh logs` | Ver logs en vivo |
+| `./run_pi_sensors.sh build` | Compilar workspace en contenedor |
+
+---
+
+## Hardware
+
+| Dispositivo | Puerto Pi | Topic |
+|---|---|---|
+| Lidar LD19 | `/dev/ttyAMA0` (GPIO14/15, UART) | `/ldlidar_node/scan` |
+| Orbbec Astra (depth) | USB (`2bc5:0403`) | `/camera/depth/points` |
+| Orbbec Astra (color) | USB (`2bc5:0501`) | `/camera/color/image_raw` |
+
+Pi config necesaria en `/boot/firmware/config.txt`:
+```
+enable_uart=1
+dtoverlay=uart0-pi5
+```
+
+---
+
+## Reconstruir imagen Pi (si Dockerfile.pi cambia)
 
 ```bash
-python3 -m pip install -r requirements_raspberry.txt
+# Desde el PC — copia y rebuilda en Pi
+./scripts/run_slam_container.sh rebuild-pi
+# ó desde SSH en Pi:
+podman build -t localhost/pedros-rescue-ros2:jazzy -f ~/pedros/Dockerfile.pi ~/pedros/
 ```
 
-## 3. Permisos USB para ROS
+---
 
-Ejecuta esto una vez en la PC y/o Raspberry que use hardware USB
-como Arduino, control, camaras o adaptadores seriales:
-
-```bash
-cd ~/Pedros-Rescue
-sudo scripts/habilitar_usb_ros.sh
-```
-
-Despues cierra sesion y vuelve a entrar, o reinicia la maquina, para que los
-grupos nuevos apliquen. Verifica con:
-
-```bash
-id
-ls -l /dev/ttyUSB* /dev/ttyACM* /dev/input/js* /dev/video*
-```
-
-Grupos usados:
-
-- `dialout`: puertos seriales `/dev/ttyUSB*` y `/dev/ttyACM*`.
-- `video`: camaras `/dev/video*`.
-- `input`: joystick/control `/dev/input/js*`.
-- `plugdev`: dispositivos USB con reglas `udev` que usan este grupo.
-
-## 4. Compilar
-
-Ejecuta esto en la PC y en la Raspberry:
-
-```bash
-cd ~/Pedros-Rescue
-source /opt/ros/<distro>/setup.bash
-colcon build --symlink-install
-source install/setup.bash
-```
-
-## 5. Arranque normal
-
-La idea es lanzar todo junto con un launch por maquina.
-
-### Raspberry: robot completo
-
-Este launch inicia motores, camara frontal Logitech y Astra RGB-D con nube de puntos:
-
-```bash
-cd ~/Pedros-Rescue
-source /opt/ros/<distro>/setup.bash
-source install/setup.bash
-ros2 launch rescue_robot_core robot_core.launch.py
-```
-
-Parametros utiles:
-
-```bash
-ros2 launch rescue_robot_core robot_core.launch.py \
-  logitech_index:=0 \
-  astra_color_index:=2 \
-  astra_depth_index:=-1 \
-  jpeg_quality:=80
-```
-
-Nota: la Astra Pro solo expone su camara RGB por V4L2 (`/dev/video2`).
-La profundidad real requiere el driver OpenNI2 de Orbbec, por eso
-`astra_depth_index` queda en `-1` (deshabilitada) por defecto.
-
-### PC: estacion de mando completa
-
-Este launch inicia `joy_node`, teleoperacion y la GUI. La GUI siempre muestra:
-
-- telemetria de manejo
-- camara frontal con lector QR
-- Astra color
-- Astra profundidad
-- estado de nube de puntos
-
-```bash
-cd ~/Pedros-Rescue
-source /opt/ros/<distro>/setup.bash
-source install/setup.bash
-ros2 launch rescue_command_station command_station.launch.py
-```
-
-Parametros utiles:
-
-```bash
-ros2 launch rescue_command_station command_station.launch.py \
-  front_camera_topic:=/robot/camera/front/image_raw/compressed \
-  astra_color_topic:=/robot/camera/astra/color/image_raw/compressed \
-  astra_depth_topic:=/robot/camera/astra/depth/image_raw/compressed \
-  point_cloud_topic:=/robot/camera/astra/points
-```
-
-## 6. Controles
-
-- Joystick izquierdo hacia adelante: ambas orugas avanzan.
-- Joystick izquierdo hacia atras: ambas orugas retroceden.
-- Joystick izquierdo hacia un lado: giro sobre el eje.
-- Joystick izquierdo en diagonal: una oruga va mas rapido que la otra.
-- `R1`: subir caja.
-- `L1`: bajar caja.
-
-## 7. Topicos principales
-
-Control:
+## Topics principales
 
 ```text
-/joy
-/cmd_vel
-/drive_status
-/real_speed_abs
+/ldlidar_node/scan                    LaserScan — lidar LD19
+/camera/depth/points                  PointCloud2 — nube 3D (sin color)
+/camera/depth_registered/points       PointCloud2 — nube 3D con color RGB
+/camera/color/image_raw               Image — RGB Orbbec
+/camera/depth/image_raw               Image — profundidad 16-bit
+/map                                   OccupancyGrid — mapa SLAM
+/accumulated_pointcloud               PointCloud2 — nube acumulada misión
 ```
 
-Vision (las imagenes viajan comprimidas como `sensor_msgs/CompressedImage`
-para no saturar el WiFi; color en JPEG y profundidad en PNG 16 bits):
+---
 
-```text
-/robot/camera/front/image_raw/compressed
-/robot/camera/astra/color/image_raw/compressed
-/robot/camera/astra/depth/image_raw/compressed
-/robot/camera/astra/points
-```
-
-## 8. Verificaciones utiles
+## Guardar mapa al final de la misión
 
 ```bash
-ros2 topic hz /robot/camera/front/image_raw/compressed
-ros2 topic hz /robot/camera/astra/color/image_raw/compressed
-ros2 topic hz /robot/camera/astra/depth/image_raw/compressed
-ros2 topic hz /robot/camera/astra/points
-ros2 topic bw /robot/camera/front/image_raw/compressed
-ros2 topic echo /cmd_vel
-ros2 topic echo /real_speed_abs
-ros2 node list
-ros2 topic list
+./scripts/run_slam_container.sh save-mission   # GeoTIFF + PLY + CSV
+./scripts/run_slam_container.sh save-map       # solo nav2 .pgm/.yaml
 ```
 
-## 9. Diagnostico por nodo
-
-Usa estos comandos solo si necesitas probar una parte por separado.
-
-Raspberry:
-
-```bash
-ros2 run rescue_robot_core motor_driver_node
-ros2 run rescue_robot_core logitech_camera_node
-ros2 run rescue_robot_core astra_rgbd_camera_node
-```
-
-PC:
-
-```bash
-ros2 run joy joy_node
-ros2 run rescue_command_station ps4_teleop_node
-ros2 run rescue_command_station dashboard_node
-```
-
-## 10. Nota de mapa 3D
-
-La Astra publica profundidad `16UC1` y nube `PointCloud2`.
-Para mapeo 3D preciso hay que calibrar `fx`, `fy`, `cx`, `cy` y `depth_scale` con los valores reales de la camara.
-
-Si `/cmd_vel` deja de llegar a la Raspberry por mas de 1 segundo, el nodo de motores detiene las salidas por seguridad.
+Los archivos se guardan en `~/maps/`.

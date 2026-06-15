@@ -42,6 +42,8 @@ def generate_launch_description():
     use_sim_time      = LaunchConfiguration('use_sim_time',    default='false')
     serial_port       = LaunchConfiguration('serial_port',    default='/dev/ttyUSB0')
     launch_rviz       = LaunchConfiguration('launch_rviz',    default='true')
+    launch_lidar      = LaunchConfiguration('launch_lidar',   default='true')
+    launch_camera     = LaunchConfiguration('launch_camera',  default='true')
     launch_detector   = LaunchConfiguration('launch_detector', default='false')
     hazmat_model_path = LaunchConfiguration('hazmat_model',   default='')
 
@@ -56,6 +58,7 @@ def generate_launch_description():
     )
 
     # ── 2. Driver LDRobot LD19 ────────────────────────────────────
+    # launch_lidar:=false cuando el lidar ya corre en la Pi
     lidar_launch = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(
             os.path.join(pkg_bringup, 'launch', 'lidar_ld19.launch.py')
@@ -64,6 +67,7 @@ def generate_launch_description():
             'serial_port':  serial_port,
             'use_sim_time': use_sim_time,
         }.items(),
+        condition=IfCondition(launch_lidar),
     )
 
     # ── 3. slam_toolbox (lifecycle node) ─────────────────────────
@@ -129,9 +133,7 @@ def generate_launch_description():
     )
 
     # ── 5. Cámara Orbbec Astra Pro ────────────────────────────────
-    # Se lanza a t=4s para que el driver encuentre el dispositivo USB
-    # antes de que slam_toolbox pida datos de la cámara.
-    # Pasar driver:=openni2 si el SDK v2 no detecta el sensor de depth.
+    # launch_camera:=false cuando las cámaras ya corren en la Pi
     camera_launch = TimerAction(
         period=4.0,
         actions=[
@@ -140,6 +142,7 @@ def generate_launch_description():
                     os.path.join(pkg_bringup, 'launch', 'camera.launch.py')
                 ),
                 launch_arguments={'driver': 'astra'}.items(),
+                condition=IfCondition(launch_camera),
             )
         ],
     )
@@ -247,6 +250,16 @@ def generate_launch_description():
             'launch_rviz',
             default_value='true',
             description='Lanzar RViz2 (false para Pi headless)',
+        ),
+        DeclareLaunchArgument(
+            'launch_lidar',
+            default_value='true',
+            description='Lanzar driver lidar (false si ya corre en Pi)',
+        ),
+        DeclareLaunchArgument(
+            'launch_camera',
+            default_value='true',
+            description='Lanzar driver cámara (false si ya corre en Pi)',
         ),
         DeclareLaunchArgument(
             'launch_detector',

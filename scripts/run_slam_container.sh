@@ -15,7 +15,11 @@ set -e
 
 WORKSPACE="$(cd "$(dirname "$0")/.." && pwd)"
 IMAGE="pedros-rescue-ros2:jazzy"
-CONTAINER="pedros_slam"
+# Nombre de contenedor según modo para poder correr SLAM + dashboard en paralelo
+case "${1:-shell}" in
+    dashboard) CONTAINER="pedros_dashboard" ;;
+    *) CONTAINER="pedros_slam" ;;
+esac
 
 # ── Modo exec: conectarse al contenedor ya corriendo ─────────────
 # Uso: ./scripts/run_slam_container.sh exec "ros2 topic list"
@@ -117,13 +121,12 @@ case "${1:-shell}" in
         ;;
 
     slam)
+        # PC-mode: lidar y cámaras ya corren en Pi — solo SLAM + RViz
         CMD="source /opt/ros/jazzy/setup.bash && \
              source /workspace/install/setup.bash && \
-             export LD_LIBRARY_PATH=/workspace/install/astra_camera/lib:\$LD_LIBRARY_PATH && \
-             export OPENNI2_REDIST=/workspace/install/astra_camera/lib && \
-             export OPENNI2_DRIVERS_PATH=/workspace/install/astra_camera/lib/OpenNI2/Drivers && \
-             echo '━━━ Lanzando SLAM stack ━━━' && \
-             ros2 launch rescue_bringup slam.launch.py"
+             echo '━━━ Lanzando SLAM stack (PC) ━━━' && \
+             ros2 launch rescue_bringup slam.launch.py \
+               launch_lidar:=false launch_camera:=false"
         ;;
 
     camera-pi)
@@ -250,6 +253,30 @@ case "${1:-shell}" in
              ls -lh /root/maps/ | tail -10"
         ;;
 
+    # ── Modos que se ejecutan en la Pi via SSH ─────────────────────
+    pi|pi-sensors|pi-lidar|pi-camera|pi-stop|pi-logs|pi-build)
+        PI_HOST="sraus@10.42.0.240"
+        PI_PASS="123456"
+        PI_MODE="${1#pi}"          # "" | "-sensors" | "-lidar" | "-camera" | "-stop" | "-logs" | "-build"
+        PI_ARG="${PI_MODE#-}"      # "" | "sensors" | "lidar" | "camera" | "stop" | "logs" | "build"
+        [ -z "$PI_ARG" ] && PI_ARG="sensors"
+
+        echo "━━━ Sincronizando scripts + launch a Pi... ━━━"
+        # Copiar el script Pi y el nuevo launch file al Pi
+        sshpass -p "$PI_PASS" scp \
+            "$WORKSPACE/scripts/run_pi_sensors.sh" \
+            "${PI_HOST}:~/pedros/scripts/run_pi_sensors.sh" 2>/dev/null || true
+        sshpass -p "$PI_PASS" scp \
+            "$WORKSPACE/src/rescue_bringup/launch/pi_sensors.launch.py" \
+            "${PI_HOST}:~/pedros/src/rescue_bringup/launch/pi_sensors.launch.py" 2>/dev/null || true
+
+        echo "━━━ Lanzando sensores en Pi (modo: ${PI_ARG}) ━━━"
+        sshpass -p "$PI_PASS" ssh -o StrictHostKeyChecking=no "$PI_HOST" \
+            "chmod +x ~/pedros/scripts/run_pi_sensors.sh && \
+             ~/pedros/scripts/run_pi_sensors.sh ${PI_ARG}"
+        exit 0
+        ;;
+
     shell|*)
         CMD="bash"
         ;;
@@ -270,7 +297,7 @@ CYCLONE_XML="<CycloneDDS><Domain>\
 </Domain></CycloneDDS>"
 
 # ── Lanzar contenedor ─────────────────────────────────────────────
-podman run -it --rm \
+podman run -it --rm --replace \
     --name "$CONTAINER" \
     --network host \
     --privileged \
