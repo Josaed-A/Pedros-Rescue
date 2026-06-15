@@ -46,8 +46,8 @@ def generate_launch_description():
                 name='object_detector',
                 output='screen',
                 parameters=[{
-                    'output_dir':        '/root/maps',
-                    'team_name':         'PedrosRescue',
+                    'output_dir':        '/workspace/maps',
+                    'team_name':         'SabanaHerons',
                     'mission':           'M1',
                     'robot_name':        'Pedro',
                     'mode':              'teleop',

@@ -1,18 +1,20 @@
 """
 pi_sensors.launch.py
 ─────────────────────
-Stack de sensores para la Raspberry Pi 5 (headless, sin SLAM ni RViz).
-El SLAM corre en el PC que recibe los topics via DDS.
+Stack completo de sensores para la Raspberry Pi 5 (headless).
+El SLAM corre en el PC y recibe los topics via DDS.
 
 Lanza:
-  • robot_description  → TF tree (URDF)
-  • ldlidar_node       → /ldlidar_node/scan
-  • astra_camera_node  → /camera/depth/points
-                         /camera/color/image_raw
-                         /camera/depth_registered/points
+  1. robot_description   → TF tree (URDF)
+  2. ldlidar_node        → /ldlidar_node/scan
+  3. astra_camera_node   → /camera/depth/points
+                           /camera/color/image_raw
+  4. logitech_pub        → /robot/camera/front/image_raw/compressed
+  5. object_detector     → /object_detections  /camera/color/image_annotated/compressed
 
 Uso:
   ros2 launch rescue_bringup pi_sensors.launch.py
+  ros2 launch rescue_bringup pi_sensors.launch.py launch_logitech:=false
   ros2 launch rescue_bringup pi_sensors.launch.py launch_camera:=false
 """
 
@@ -31,8 +33,10 @@ from launch.substitutions import LaunchConfiguration
 
 
 def generate_launch_description():
-    launch_camera = LaunchConfiguration('launch_camera', default='true')
-    launch_lidar  = LaunchConfiguration('launch_lidar',  default='true')
+    launch_camera   = LaunchConfiguration('launch_camera',   default='true')
+    launch_lidar    = LaunchConfiguration('launch_lidar',    default='true')
+    launch_logitech = LaunchConfiguration('launch_logitech', default='true')
+    hazmat_model    = LaunchConfiguration('hazmat_model',    default='')
 
     pkg_bringup = get_package_share_directory('rescue_bringup')
 
@@ -65,18 +69,48 @@ def generate_launch_description():
         ],
     )
 
+    # ── 4+5. Logitech frontal + detector de objetos (YOLO + hazmat) ─
+    logitech_launch = TimerAction(
+        period=6.0,
+        actions=[
+            IncludeLaunchDescription(
+                PythonLaunchDescriptionSource(
+                    os.path.join(pkg_bringup, 'launch', 'logitech_vision.launch.py')
+                ),
+                launch_arguments={
+                    'device':        '2',
+                    'fps':           '15',
+                    'hazmat_model':  hazmat_model,
+                    'enable_yolo':   'true',
+                }.items(),
+                condition=IfCondition(launch_logitech),
+            )
+        ],
+    )
+
     return LaunchDescription([
         DeclareLaunchArgument(
             'launch_camera',
             default_value='true',
-            description='Lanzar cámara Orbbec Astra Pro (false = solo lidar)',
+            description='Lanzar cámara Orbbec Astra Pro',
         ),
         DeclareLaunchArgument(
             'launch_lidar',
             default_value='true',
             description='Lanzar lidar LD19',
         ),
+        DeclareLaunchArgument(
+            'launch_logitech',
+            default_value='true',
+            description='Lanzar cámara Logitech frontal + object_detector',
+        ),
+        DeclareLaunchArgument(
+            'hazmat_model',
+            default_value='',
+            description='Ruta al modelo YOLO hazmat (.pt). Vacío = HSV fallback',
+        ),
         robot_description_launch,
         lidar_launch,
         camera_launch,
+        logitech_launch,
     ])

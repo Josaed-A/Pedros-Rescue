@@ -41,6 +41,8 @@ if [ "${1:-}" = "build" ]; then
         bash -c "
             source /opt/ros/jazzy/setup.bash
             cd /workspace
+            echo '--- dependencias apt ---'
+            apt-get install -y ros-jazzy-image-publisher 2>/dev/null || true
             echo '--- rosdep ---'
             rosdep install --from-paths src --ignore-src -r -y \
               --skip-keys 'ldlidar_component ldlidar_node ldlidar OrbbecSDK_ROS2 rescue_raspberry_brain orbbec_camera orbbec_camera_msgs orbbec_description rescue_command_station' 2>/dev/null || true
@@ -65,6 +67,10 @@ DEVICE_ARGS=()
 [ -e /dev/ttyAMA0 ] && DEVICE_ARGS+=(--device=/dev/ttyAMA0)
 # USB completo para Orbbec Astra Pro (protocolo propietario)
 [ -e /dev/bus/usb ] && DEVICE_ARGS+=(-v /dev/bus/usb:/dev/bus/usb:rw)
+# Camaras V4L2 (Logitech y otras)
+for _vid in /dev/video*; do
+    [ -e "$_vid" ] && DEVICE_ARGS+=(--device="$_vid")
+done
 
 # ── CycloneDDS: interfaz eth0 de la Pi, peer = PC ─────────────────
 CYCLONE_XML="<CycloneDDS><Domain>\

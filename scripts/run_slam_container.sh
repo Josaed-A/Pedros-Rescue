@@ -262,13 +262,18 @@ case "${1:-shell}" in
         [ -z "$PI_ARG" ] && PI_ARG="sensors"
 
         echo "━━━ Sincronizando scripts + launch a Pi... ━━━"
-        # Copiar el script Pi y el nuevo launch file al Pi
         sshpass -p "$PI_PASS" scp \
             "$WORKSPACE/scripts/run_pi_sensors.sh" \
             "${PI_HOST}:~/pedros/scripts/run_pi_sensors.sh" 2>/dev/null || true
         sshpass -p "$PI_PASS" scp \
+            "$WORKSPACE/scripts/install_pi_autostart.sh" \
+            "${PI_HOST}:~/pedros/scripts/install_pi_autostart.sh" 2>/dev/null || true
+        sshpass -p "$PI_PASS" scp \
             "$WORKSPACE/src/rescue_bringup/launch/pi_sensors.launch.py" \
             "${PI_HOST}:~/pedros/src/rescue_bringup/launch/pi_sensors.launch.py" 2>/dev/null || true
+        sshpass -p "$PI_PASS" scp \
+            "$WORKSPACE/src/rescue_bringup/launch/logitech_vision.launch.py" \
+            "${PI_HOST}:~/pedros/src/rescue_bringup/launch/logitech_vision.launch.py" 2>/dev/null || true
 
         echo "━━━ Lanzando sensores en Pi (modo: ${PI_ARG}) ━━━"
         sshpass -p "$PI_PASS" ssh -o StrictHostKeyChecking=no "$PI_HOST" \
