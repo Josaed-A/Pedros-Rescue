@@ -1,0 +1,13 @@
+# Lee el estado y las alarmas de los servos del driver (protocolo Dynamixel 1.0).
+# Request vacio.
+---
+bool      success
+int32[]   ids            # ID de cada servo registrado
+string[]  nombres        # nombre del joint
+bool[]    responde       # true si el servo contesto en el bus
+bool[]    torque_on      # true si el torque esta habilitado
+int32[]   error_byte     # byte de error del status (0 = sin alarma)
+string[]  alerta         # descripcion legible de la alarma (vacio = OK)
+int32[]   temperatura    # temperatura interna en °C
+float32[] voltaje        # voltaje de alimentacion en V
+string    mensaje

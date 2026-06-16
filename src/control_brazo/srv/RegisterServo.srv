@@ -1,0 +1,9 @@
+# Registra un servo en el driver en tiempo de ejecucion
+int32  id
+string nombre
+float64 reduccion
+float64 deadband_deg
+bool   invertir_giro
+---
+bool   success
+string mensaje

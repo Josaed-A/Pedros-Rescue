@@ -7,6 +7,7 @@
 #   ./scripts/run_pi_sensors.sh           → sensores completos (lidar + cámara)
 #   ./scripts/run_pi_sensors.sh lidar     → solo lidar LD19
 #   ./scripts/run_pi_sensors.sh camera    → solo cámara Orbbec
+#   ./scripts/run_pi_sensors.sh arm       → solo drivers del brazo (Dynamixel)
 #   ./scripts/run_pi_sensors.sh stop      → detener contenedor
 #   ./scripts/run_pi_sensors.sh logs      → ver logs en vivo
 #   ./scripts/run_pi_sensors.sh build     → compilar workspace en contenedor
@@ -71,6 +72,12 @@ DEVICE_ARGS=()
 for _vid in /dev/video*; do
     [ -e "$_vid" ] && DEVICE_ARGS+=(--device="$_vid")
 done
+# Brazo: Dynamixel AX-12A / EX-106+ via adaptadores USB-serial
+for _usb in /dev/ttyUSB0 /dev/ttyUSB1; do
+    [ -e "$_usb" ] && DEVICE_ARGS+=(--device="$_usb")
+done
+# Symlinks estables by-id (servos.yaml usa /dev/serial/by-id/...)
+[ -d /dev/serial ] && DEVICE_ARGS+=(-v /dev/serial:/dev/serial:ro)
 
 # ── CycloneDDS: interfaz eth0 de la Pi, peer = PC ─────────────────
 CYCLONE_XML="<CycloneDDS><Domain>\
@@ -91,16 +98,27 @@ case "${1:-sensors}" in
     camera)
         LAUNCH_ARGS="launch_lidar:=false"
         ;;
+    arm)
+        LAUNCH_ARGS="__ARM__"
+        ;;
     *)
         LAUNCH_ARGS=""
         ;;
 esac
 
-CMD="chmod a+rw /dev/video* 2>/dev/null || true && \
-     source /opt/ros/jazzy/setup.bash && \
-     source /workspace/install/setup.bash && \
-     echo '━━━ Sensores Pi: LD19 + Orbbec Astra Pro ━━━' && \
-     ros2 launch rescue_bringup pi_sensors.launch.py ${LAUNCH_ARGS}"
+if [ "${LAUNCH_ARGS}" = "__ARM__" ]; then
+    # Solo drivers del brazo (Dynamixel) — cinematica/GUI corren en el PC
+    CMD="source /opt/ros/jazzy/setup.bash && \
+         source /workspace/install/setup.bash && \
+         echo '━━━ Brazo Pi: drivers Dynamixel AX-12A + EX-106+ ━━━' && \
+         ros2 launch control_brazo arm_pi.launch.py"
+else
+    CMD="chmod a+rw /dev/video* 2>/dev/null || true && \
+         source /opt/ros/jazzy/setup.bash && \
+         source /workspace/install/setup.bash && \
+         echo '━━━ Sensores Pi: LD19 + Orbbec Astra Pro ━━━' && \
+         ros2 launch rescue_bringup pi_sensors.launch.py ${LAUNCH_ARGS}"
+fi
 
 echo "━━━ Dispositivos: ${DEVICE_ARGS[*]} ━━━"
 

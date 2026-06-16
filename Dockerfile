@@ -56,12 +56,17 @@ RUN apt-get update && apt-get install -y \
     ros-jazzy-class-loader \
     ros-jazzy-rmw-cyclonedds-cpp \
     python3-opencv \
+    python3-tk \
     python3-pip \
     && rm -rf /var/lib/apt/lists/*
 
 # ── Ultralytics YOLO para detección de objetos ────────────────────
 RUN pip3 install --no-cache-dir ultralytics==8.3.* 2>/dev/null || \
     pip3 install --no-cache-dir ultralytics
+
+# ── GUI del brazo 6-DOF (control_brazo): customtkinter + matplotlib ─
+RUN pip3 install --no-cache-dir customtkinter matplotlib 2>/dev/null || \
+    pip3 install --no-cache-dir --break-system-packages customtkinter matplotlib
 
 # ── Pre-descargar modelo YOLOv8n (~6 MB) para uso offline ────────
 RUN python3 -c "from ultralytics import YOLO; YOLO('yolov8n.pt')" || \

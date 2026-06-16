@@ -71,6 +71,9 @@ RUN pip3 install torch torchvision \
 RUN pip3 install ultralytics --break-system-packages --no-cache-dir \
     && python3 -c "from ultralytics import YOLO; print('ultralytics OK')"
 
+# ── Brazo 6-DOF: SDK Dynamixel + pyserial para los drivers AX-12A/EX-106+ ─
+RUN pip3 install dynamixel-sdk pyserial --break-system-packages --no-cache-dir
+
 # ── Workspace ─────────────────────────────────────────────────────
 WORKDIR /workspace
 

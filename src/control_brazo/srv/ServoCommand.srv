@@ -1,0 +1,7 @@
+# Mueve un servo a un angulo objetivo
+int32   id
+float64 target_deg
+float64 vel_pct
+---
+bool    success
+string  mensaje

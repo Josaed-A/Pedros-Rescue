@@ -3,15 +3,18 @@ import datetime
 import json
 import os
 import subprocess
+import threading
 import tkinter as tk
 from tkinter import messagebox, ttk
 
 import rclpy
 from rclpy.node import Node
 from rclpy.qos import QoSHistoryPolicy, QoSProfile, QoSReliabilityPolicy
-from sensor_msgs.msg import CompressedImage, PointCloud2
+from sensor_msgs.msg import CompressedImage, Joy, JointState, PointCloud2
 from std_msgs.msg import Float32, String
 from std_srvs.srv import Trigger
+
+from rescue_command_station.control import config as cfg
 
 from rescue_command_station.vision.qr_detector import QrDetector
 from rescue_command_station.vision.ros_image import compressed_msg_to_numpy
@@ -54,6 +57,16 @@ _PODMAN_SOCK = '/tmp/podman.sock'
 
 
 # ─── ROS Node ────────────────────────────────────────────────────────────────
+
+# ─── Patas (control con stick derecho) ───────────────────────────────────────
+LEG_FRONT  = ['PataDelIzq', 'PataDelDer']    # eje X del stick derecho
+LEG_REAR   = ['PataTrasIzq', 'PataTrasDer']  # eje Y del stick derecho
+LEG_NAMES  = LEG_FRONT + LEG_REAR
+LEG_LABELS = {
+    'PataDelIzq': 'Del · Izq', 'PataDelDer': 'Del · Der',
+    'PataTrasIzq': 'Tras · Izq', 'PataTrasDer': 'Tras · Der',
+}
+
 
 class DashboardRosNode(Node):
     def __init__(self):
@@ -119,6 +132,18 @@ class DashboardRosNode(Node):
         self._save_csv_client     = self.create_client(Trigger, '/save_detection_csv')
         self._save_ply_client     = self.create_client(Trigger, '/save_pointcloud_ply')
         self._save_geotiff_client = self.create_client(Trigger, '/save_geotiff')
+
+        # ── Patas (stick derecho) ─────────────────────────────────────
+        # enabled: si una pata esta deshabilitada el joystick no la mueve
+        # (permite controlar solo una). pos_deg: grados acumulados en vivo.
+        self.legs_enabled = {n: True for n in LEG_NAMES}
+        self.legs_pos_deg = {n: 0.0 for n in LEG_NAMES}
+        self._legs_cmd_pub = self.create_publisher(JointState, '/legs/cmd', 10)
+        self.create_subscription(JointState, '/legs/state', self.legs_state_callback, 10)
+        self.create_subscription(Joy, '/joy', self.joy_legs_callback, 10)
+        self._legs_calib_client  = self.create_client(Trigger, '/legs/calibrate')
+        self._legs_torque_client = self.create_client(Trigger, '/legs/enable_torque')
+        self._ax_connect_client  = self.create_client(Trigger, '/ax12a/connect')
 
         self.get_logger().info('Dashboard iniciado — vision, mapeo y control')
 
@@ -199,6 +224,36 @@ class DashboardRosNode(Node):
         future = client.call_async(Trigger.Request())
         return future
 
+    # ── Patas ────────────────────────────────────────────────────
+    def legs_state_callback(self, msg):
+        """/legs/state: position[] = grados de salida acumulados (rad)."""
+        import math
+        for k, name in enumerate(msg.name):
+            if name in self.legs_pos_deg and k < len(msg.position):
+                self.legs_pos_deg[name] = math.degrees(msg.position[k])
+
+    def joy_legs_callback(self, msg):
+        """Stick derecho → giro de pares de patas. Eje X = delanteras,
+        eje Y = traseras; el signo decide la direccion. Las patas
+        deshabilitadas no se mueven (para controlar solo una)."""
+        if len(msg.axes) <= max(cfg.AXIS_RIGHT_X, cfg.AXIS_RIGHT_Y):
+            return
+        rx = msg.axes[cfg.AXIS_RIGHT_X]
+        ry = msg.axes[cfg.AXIS_RIGHT_Y]
+        dz = cfg.LEGS_DEADZONE
+        front_dir = 1 if rx > dz else (-1 if rx < -dz else 0)
+        rear_dir  = 1 if ry > dz else (-1 if ry < -dz else 0)
+
+        cmd = JointState()
+        cmd.header.stamp = self.get_clock().now().to_msg()
+        for n in LEG_FRONT:
+            cmd.name.append(n)
+            cmd.velocity.append(float(front_dir if self.legs_enabled[n] else 0))
+        for n in LEG_REAR:
+            cmd.name.append(n)
+            cmd.velocity.append(float(rear_dir if self.legs_enabled[n] else 0))
+        self._legs_cmd_pub.publish(cmd)
+
 
 # ─── Dashboard App ───────────────────────────────────────────────────────────
 
@@ -226,6 +281,8 @@ class ModernDashboardApp:
 
         # RViz subprocess
         self._rviz_proc: subprocess.Popen | None = None
+        # GUI del brazo (arm_station) — proceso aparte; se alterna con el dashboard
+        self._arm_proc: subprocess.Popen | None = None
 
         self.root.title('Pedro Rescue - Estacion de Mando')
         self.root.geometry('1460x840')
@@ -415,6 +472,60 @@ class ModernDashboardApp:
             activebackground=COLORS['surface_soft'], activeforeground=COLORS['text'],
             command=self._on_launch_rviz)
         self.btn_rviz.pack(fill='x')
+
+        # ── Control del brazo 6-DOF ───────────────────────────────
+        self.btn_arm = tk.Button(
+            panel, text='CONTROL DEL BRAZO',
+            bg=COLORS['surface_high'], fg=COLORS['cyan'],
+            font=(FONT, 12, 'bold'), relief='flat', bd=0,
+            pady=13, cursor='hand2',
+            activebackground=COLORS['surface_soft'], activeforeground=COLORS['text'],
+            command=self._on_toggle_arm)
+        self.btn_arm.pack(fill='x', pady=(8, 0))
+
+        # ── Patas (stick derecho) ─────────────────────────────────
+        tk.Frame(panel, bg=COLORS['border'], height=1).pack(fill='x', pady=(10, 6))
+        tk.Label(panel, text='PATAS · stick derecho (X=delanteras, Y=traseras)',
+                 bg=COLORS['surface'], fg=COLORS['muted'],
+                 font=(FONT, 9, 'bold'), anchor='w').pack(fill='x')
+
+        self._leg_val_labels = {}
+        self._leg_vars = {}
+        for name in LEG_NAMES:
+            row = tk.Frame(panel, bg=COLORS['surface'])
+            row.pack(fill='x', pady=1)
+            var = tk.BooleanVar(value=True)
+            self._leg_vars[name] = var
+            tk.Checkbutton(
+                row, variable=var, bg=COLORS['surface'],
+                activebackground=COLORS['surface'], selectcolor=COLORS['surface_high'],
+                fg=COLORS['text'], bd=0, highlightthickness=0,
+                command=lambda n=name: self._on_leg_toggle(n)).pack(side='left')
+            tk.Label(row, text=LEG_LABELS[name], bg=COLORS['surface'],
+                     fg=COLORS['text'], width=10, anchor='w',
+                     font=(FONT, 9)).pack(side='left')
+            lbl = tk.Label(row, text='—', bg=COLORS['surface'], fg=COLORS['cyan'],
+                           width=9, anchor='e', font=(FONT, 11, 'bold'))
+            lbl.pack(side='right')
+            self._leg_val_labels[name] = lbl
+
+        leg_btns = tk.Frame(panel, bg=COLORS['surface'])
+        leg_btns.pack(fill='x', pady=(5, 0))
+        for txt, cmd, fg in [
+            ('CONECTAR',   self._on_legs_connect,   COLORS['blue']),
+            ('CALIBRAR 0°', self._on_legs_calibrate, COLORS['green']),
+            ('TORQUE',     self._on_legs_torque,    COLORS['amber']),
+        ]:
+            tk.Button(leg_btns, text=txt, bg=COLORS['surface_high'], fg=fg,
+                      font=(FONT, 9, 'bold'), relief='flat', bd=0, pady=7,
+                      cursor='hand2', activebackground=COLORS['surface_soft'],
+                      activeforeground=COLORS['text'], command=cmd).pack(
+                          side='left', fill='x', expand=True, padx=2)
+        self._legs_status_label = tk.Label(
+            panel, text='Calibrar: posiciona con el stick y pon 0° aquí.',
+            bg=COLORS['surface'], fg=COLORS['muted'], font=(FONT, 8),
+            anchor='w', wraplength=420, justify='left')
+        self._legs_status_label.pack(fill='x', pady=(2, 0))
 
         # ── Mision ────────────────────────────────────────────────
         tk.Frame(panel, bg=COLORS['border'], height=1).pack(fill='x', pady=(10, 8))
@@ -647,6 +758,65 @@ else:
         self.btn_rviz.configure(text='RVIZ CORRIENDO  ●',
                                 fg=COLORS['green'], bg=COLORS['green_bg'])
 
+    # ─── Control del brazo 6-DOF (alternar GUI) ───────────────────────────
+
+    def _on_toggle_arm(self):
+        """Lanza la GUI del brazo (arm_station) y oculta el dashboard.
+
+        Solo una GUI visible a la vez. arm_station corre en este mismo
+        contenedor (ya sourcado). Al cerrar la GUI del brazo, su grupo de
+        proceso termina y el dashboard reaparece (ver _wait_arm)."""
+        if self._arm_proc is not None and self._arm_proc.poll() is None:
+            return  # ya esta corriendo
+        try:
+            self._arm_proc = subprocess.Popen(
+                ['ros2', 'launch', 'control_brazo', 'arm_station.launch.py'],
+                start_new_session=True)
+        except Exception as e:
+            messagebox.showerror(
+                'Control del Brazo',
+                f'No se pudo lanzar la GUI del brazo:\n{e}')
+            return
+        self.root.withdraw()
+        threading.Thread(target=self._wait_arm, daemon=True).start()
+
+    def _wait_arm(self):
+        try:
+            self._arm_proc.wait()
+        except Exception:
+            pass
+        # Reaparecer el dashboard en el hilo de Tk (Tk no es thread-safe)
+        self.root.after(0, self.root.deiconify)
+
+    # ─── Patas ────────────────────────────────────────────────────────────
+
+    def _on_leg_toggle(self, name):
+        self.ros_node.legs_enabled[name] = bool(self._leg_vars[name].get())
+
+    def _legs_call(self, client, accion):
+        def cb(success, msg):
+            self._legs_status_label.configure(
+                text=f'{accion}: {msg}',
+                fg=COLORS['green'] if success else COLORS['red'])
+        future = self.ros_node.call_service_async(client, cb)
+        if future is not None:
+            self._pending_futures.append((future, cb))
+        self._legs_status_label.configure(text=f'{accion}...', fg=COLORS['muted'])
+
+    def _on_legs_connect(self):
+        self._legs_call(self.ros_node._ax_connect_client, 'Conectar bus')
+
+    def _on_legs_calibrate(self):
+        self._legs_call(self.ros_node._legs_calib_client, 'Calibrar patas')
+
+    def _on_legs_torque(self):
+        self._legs_call(self.ros_node._legs_torque_client, 'Rehabilitar torque')
+
+    def _refresh_legs(self):
+        for name, lbl in self._leg_val_labels.items():
+            deg = self.ros_node.legs_pos_deg.get(name, 0.0)
+            lbl.configure(text=f'{deg:+.1f}°')
+
     def _check_rviz_status(self):
         if self._rviz_proc is not None and self._rviz_proc.poll() is not None:
             rc = self._rviz_proc.returncode
@@ -865,6 +1035,7 @@ else:
         self.refresh_drive_status()
         self.refresh_cameras()
         self._refresh_det_tree()
+        self._refresh_legs()
         self.root.after(50, self.refresh_ui)
 
     def refresh_raspberry_status(self):

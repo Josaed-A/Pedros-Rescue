@@ -1,0 +1,16 @@
+# Trayectoria cartesiana: mueve el efector de la pose actual a (x,y,z,R)
+# generando n_steps poses intermedias (interpolacion lineal + SLERP).
+# El nodo cartesian_node ejecuta la trayectoria en un hilo background y
+# devuelve la respuesta de inmediato (ejecucion asincrona).
+float64   x
+float64   y
+float64   z
+float64[] r         # matriz de rotacion 3x3, orden fila-mayor (9 valores)
+string    elbow     # "up" o "down"
+int32     n_steps   # pasos de interpolacion (>= 1)
+float64   step_dt   # segundos entre pasos (>= 0.02)
+float64   vel_pct   # velocidad articular %
+---
+bool      success
+string    mensaje
+int32     steps_sent

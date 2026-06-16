@@ -104,7 +104,8 @@ cd ~/Escritorio/PROYECTOS/Pedros-Rescue
 | Comando | Qué hace |
 |---|---|
 | `slam` | SLAM + RViz en PC (sin lidar/cámara) |
-| `dashboard` | Ground station GUI en PC |
+| `dashboard` | Ground station GUI en PC (botón "Control del Brazo" → GUI del brazo, modo real) |
+| `brazo-sim` | Brazo 6-DOF en SIMULACIÓN, todo en el PC (sin la Pi) |
 | `pi` | SSH → lanza sensores en Pi via contenedor |
 | `pi-lidar` | SSH → solo lidar en Pi |
 | `pi-camera` | SSH → solo cámara Orbbec en Pi |
@@ -126,6 +127,7 @@ cd ~/Escritorio/PROYECTOS/Pedros-Rescue
 | `./run_pi_sensors.sh` | Lidar + cámara Orbbec (completo) |
 | `./run_pi_sensors.sh lidar` | Solo lidar LD19 |
 | `./run_pi_sensors.sh camera` | Solo cámara Orbbec |
+| `./run_pi_sensors.sh arm` | Solo drivers del brazo (Dynamixel AX-12A + EX-106+) |
 | `./run_pi_sensors.sh stop` | Detener contenedor |
 | `./run_pi_sensors.sh logs` | Ver logs en vivo |
 | `./run_pi_sensors.sh build` | Compilar workspace en contenedor |

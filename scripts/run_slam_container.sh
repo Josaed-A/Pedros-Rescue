@@ -18,6 +18,7 @@ IMAGE="pedros-rescue-ros2:jazzy"
 # Nombre de contenedor según modo para poder correr SLAM + dashboard en paralelo
 case "${1:-shell}" in
     dashboard) CONTAINER="pedros_dashboard" ;;
+    brazo-sim) CONTAINER="pedros_brazo_sim" ;;
     *) CONTAINER="pedros_slam" ;;
 esac
 
@@ -178,6 +179,15 @@ case "${1:-shell}" in
              source /workspace/install/setup.bash && \
              echo '━━━ Lanzando Ground Station Dashboard ━━━' && \
              ros2 launch rescue_command_station command_station.launch.py"
+        ;;
+
+    brazo-sim)
+        # Brazo 6-DOF en SIMULACION — todo en el PC, sin la Raspberry.
+        # Drivers simulados + cinematica + cartesiano + GUI (vista 3D + pinza).
+        CMD="source /opt/ros/jazzy/setup.bash && \
+             source /workspace/install/setup.bash && \
+             echo '━━━ Brazo 6-DOF (SIMULACION, solo PC) ━━━' && \
+             ros2 launch control_brazo arm_station.launch.py sim:=true"
         ;;
 
     slam-pi)

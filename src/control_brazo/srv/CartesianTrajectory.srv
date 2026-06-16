@@ -1,0 +1,17 @@
+# Trayectoria cartesiana multi-waypoint.
+# Inspirada en FollowCartesianTrajectory (Universal Robots ROS controllers),
+# adaptada al solver geometrico propio sin KDL ni ros2_control.
+#
+# El primer waypoint se usa como pose inicial de referencia;
+# si r esta vacio se usa la pose actual del TCP.
+control_brazo/CartesianWaypoint[] waypoints
+string   elbow           # "up" o "down"
+float64  vel_pct         # velocidad articular porcentaje [1, 100]
+float64  path_tol_pos    # tolerancia de posicion en ruta (m)  — 0 = sin limite
+float64  path_tol_rot    # tolerancia de orientacion en ruta (rad) — 0 = sin limite
+float64  goal_tol_pos    # tolerancia de posicion en meta (m)
+float64  goal_tol_rot    # tolerancia de orientacion en meta (rad)
+---
+bool     success
+string   mensaje
+int32    waypoints_accepted

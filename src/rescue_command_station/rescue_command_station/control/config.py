@@ -2,6 +2,13 @@
 AXIS_LEFT_X = 0
 AXIS_LEFT_Y = 1
 
+# Stick derecho (control de patas). En el driver joy de Linux para el DS4:
+# eje 3 = horizontal derecho (RX), eje 4 = vertical derecho (RY).
+AXIS_RIGHT_X = 3
+AXIS_RIGHT_Y = 4
+# Zona muerta para ignorar el reposo del stick.
+LEGS_DEADZONE = 0.35
+
 BUTTON_L1 = 4
 BUTTON_R1 = 5
 

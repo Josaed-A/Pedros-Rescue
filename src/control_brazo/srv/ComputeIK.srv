@@ -1,0 +1,12 @@
+# Calcula cinematica inversa dado un objetivo cartesiano
+float64 x
+float64 y
+float64 z
+float64 beta_deg   # angulo de acercamiento (cabeceo del antebrazo)
+float64 q5_deg     # giro de munieca sobre el eje del antebrazo
+float64 q6_deg     # roll de la herramienta
+string  elbow      # "up" o "down"
+---
+bool      success
+float64[] q_rad    # angulos articulares [q1..q6]
+string    mensaje
