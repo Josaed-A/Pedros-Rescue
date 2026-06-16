@@ -3,17 +3,17 @@ vision.launch.py
 Launch standalone del módulo de visión: cámara + object_detector.
 
 Soporta dos drivers:
+  camera_driver:=astra_core → driver propio astra_rgbd_camera_node (CompressedImage)
+                               Topics: /robot/camera/astra/color|depth/image_raw/compressed
   camera_driver:=astra_sdk  → driver oficial ros2_astra_camera (raw Image + CameraInfo)
                                Topics: /camera/color/image_raw, /camera/depth/image_raw
-  camera_driver:=astra_core → driver del compañero astra_rgbd_camera_node (CompressedImage)
-                               Topics: /robot/camera/astra/color|depth/image_raw/compressed
 
 Uso:
-  # Driver oficial (PC con SDK compilado)
+  # Driver propio (sin submodulos externos)
   ros2 launch rescue_bringup vision.launch.py
 
-  # Driver del compañero (Pi o sin SDK)
-  ros2 launch rescue_bringup vision.launch.py camera_driver:=astra_core
+  # Driver oficial (PC/Pi con SDK compilado aparte)
+  ros2 launch rescue_bringup vision.launch.py camera_driver:=astra_sdk
 
   # Con modelo hazmat entrenado
   ros2 launch rescue_bringup vision.launch.py \\
@@ -42,7 +42,7 @@ def generate_launch_description():
     hazmat_model   = LaunchConfiguration('hazmat_model',   default='')
     enable_yolo    = LaunchConfiguration('enable_yolo',    default='true')
     launch_rviz    = LaunchConfiguration('launch_rviz',    default='false')
-    camera_driver  = LaunchConfiguration('camera_driver',  default='astra_sdk')
+    camera_driver  = LaunchConfiguration('camera_driver',  default='astra_core')
 
     # ── Driver oficial: ros2_astra_camera / orbbec_camera ────────────
     # Publica Image raw + CameraInfo en /camera/...
@@ -79,6 +79,8 @@ def generate_launch_description():
                     'jpeg_quality':  80,
                     'mjpeg_passthrough': True,
                     'publish_point_cloud': False,
+                    'depth_frame_id': 'camera_optical_link',
+                    'color_frame_id': 'camera_optical_link',
                 }],
             )
         ],
@@ -142,6 +144,7 @@ def generate_launch_description():
                     'color_topic':         '/robot/camera/astra/color/image_raw/compressed',
                     'depth_topic':         '/robot/camera/astra/depth/image_raw/compressed',
                     'camera_info_topic':   '/robot/camera/astra/camera_info',
+                    'camera_frame_id':     'camera_optical_link',
                     # Intrínsecos Astra Pro (fallback cuando no hay CameraInfo)
                     'fx':                  525.0,
                     'fy':                  525.0,
@@ -169,8 +172,8 @@ def generate_launch_description():
     return LaunchDescription([
         DeclareLaunchArgument(
             'camera_driver',
-            default_value='astra_sdk',
-            description='Driver de cámara: astra_sdk (oficial) | astra_core (compañero)',
+            default_value='astra_core',
+            description='Driver de cámara: astra_core (propio) | astra_sdk (externo)',
         ),
         DeclareLaunchArgument(
             'hazmat_model',

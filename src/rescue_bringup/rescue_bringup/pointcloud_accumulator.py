@@ -5,7 +5,9 @@ Acumula la nube de puntos 3D en el frame 'map' y la exporta como PLY ASCII.
 
 Fuente principal:
   /camera/depth_registered/points  (XYZRGB — cámara depth + color alineado)
-  Fallback: /camera/depth/points   (XYZ  — solo profundidad)
+  Fallbacks:
+    /camera/depth/points           (XYZ — driver oficial)
+    /robot/camera/astra/points     (XYZ — driver propio rescue_robot_core)
 
 La nube acumulada se publica en /accumulated_pointcloud (frame: map) para
 que RViz la muestre creciendo con el tiempo, igual que el mapa SLAM.
@@ -157,6 +159,9 @@ class PointCloudAccumulator(Node):
             self._on_cloud, qos_profile_sensor_data)
         self._sub_depth = self.create_subscription(
             PointCloud2, '/camera/depth/points',
+            self._on_depth_only, qos_profile_sensor_data)
+        self._sub_astra_core = self.create_subscription(
+            PointCloud2, '/robot/camera/astra/points',
             self._on_depth_only, qos_profile_sensor_data)
 
         # Servicio guardar PLY

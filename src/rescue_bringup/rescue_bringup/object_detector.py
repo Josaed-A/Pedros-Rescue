@@ -120,6 +120,7 @@ class ObjectDetector(Node):
         self.declare_parameter('color_topic',        '/camera/color/image_raw')
         self.declare_parameter('depth_topic',        '/camera/depth/image_raw')
         self.declare_parameter('camera_info_topic',  '/camera/color/camera_info')
+        self.declare_parameter('camera_frame_id',    'camera_optical_link')
         # require_depth=false → detecta sin profundidad (x=y=z=0), útil con Logitech
         self.declare_parameter('require_depth',      True)
         # Intrínsecos de la Astra Pro (fallback cuando no hay CameraInfo)
@@ -321,9 +322,6 @@ class ObjectDetector(Node):
             return
         self._last_detect_time = now
 
-        if self._cam_info is None:
-            return
-
         try:
             bgr = self._bridge.imgmsg_to_cv2(msg, 'bgr8')
         except Exception:
@@ -502,7 +500,7 @@ class ObjectDetector(Node):
         Convierte un pixel (u, v) a coordenadas 3D en el frame 'map'.
         Usa la imagen de profundidad + intrínsecos de la cámara + TF.
         """
-        if self._depth_img is None or self._cam_info is None:
+        if self._depth_img is None:
             return None
 
         h, w = self._depth_img.shape[:2]
@@ -535,7 +533,11 @@ class ObjectDetector(Node):
         z_cam = depth
 
         # Transformar al frame 'map'
-        frame_id = self._cam_info.header.frame_id or 'astra_color_optical_frame'
+        frame_id = (
+            self._cam_info.header.frame_id
+            if self._cam_info is not None and self._cam_info.header.frame_id
+            else self.get_parameter('camera_frame_id').value
+        )
         try:
             t = self._tf_buf.lookup_transform('map', frame_id, rclpy.time.Time())
         except Exception:

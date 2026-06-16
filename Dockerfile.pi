@@ -7,6 +7,17 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     python3-colcon-common-extensions \
     python3-rosdep \
     python3-vcstool \
+    ros-jazzy-ament-cmake \
+    ros-jazzy-ament-cmake-python \
+    ros-jazzy-rosidl-default-generators \
+    ros-jazzy-rosidl-default-runtime \
+    ros-jazzy-rclpy \
+    ros-jazzy-std-msgs \
+    ros-jazzy-std-srvs \
+    ros-jazzy-sensor-msgs \
+    ros-jazzy-geometry-msgs \
+    ros-jazzy-nav-msgs \
+    ros-jazzy-visualization-msgs \
     ros-jazzy-slam-toolbox \
     ros-jazzy-nav2-map-server \
     ros-jazzy-nav2-lifecycle-manager \

@@ -12,9 +12,9 @@ Raspberry Pi 5  ─── ethernet ──→  PC Ubuntu
 
 Pi publica:                     PC consume:
   /ldlidar_node/scan   ───────→  slam_toolbox
-  /camera/depth/points ───────→  RViz (nube 3D)
-  /camera/color/image_raw ───→  RViz (imagen)
-  /camera/depth/image_raw ───→  RViz (profundidad)
+  /robot/camera/astra/points ─→  RViz + acumulador PLY
+  /robot/camera/astra/color/image_raw/compressed ─→ dashboard
+  /robot/camera/astra/depth/image_raw/compressed ─→ dashboard/estado
 ```
 
 ---
@@ -43,6 +43,11 @@ tmux new -s sensors        # o: tmux attach -t sensors
 
 > Los scripts (`run_slam_container.sh pi*`) usan llave SSH por defecto. Si necesitas
 > contraseña, expórtala en el entorno (no va en el repo): `export PI_PASS="..."`.
+
+Antes de compilar en una instalación limpia, asegúrate de tener disponible el
+paquete ROS `ldlidar_component` para el LD19. El driver Astra por defecto es el
+propio del repo (`camera_driver:=astra_core`); `camera_driver:=astra_sdk` solo se
+usa si instalas/clonas el SDK oficial aparte.
 
 **Opción A — Nativo (recomendado, inmediato):**
 ```bash
@@ -73,9 +78,10 @@ ros2 topic list | grep -E "scan|depth|color|point"
 ```
 Debe aparecer:
 - `/ldlidar_node/scan`
-- `/camera/depth/points`
-- `/camera/color/image_raw`
-- `/camera/depth/image_raw`
+- `/robot/camera/astra/color/image_raw/compressed`
+- `/robot/camera/astra/depth/image_raw/compressed` (si `astra_depth_index` está configurado)
+- `/robot/camera/astra/points` (si hay profundidad)
+- `/robot/camera/front/image_raw/compressed`
 
 ---
 
@@ -88,7 +94,7 @@ cd ~/Escritorio/PROYECTOS/Pedros-Rescue
 
 Esto abre RViz con:
 - Mapa SLAM construyéndose en tiempo real
-- Nube de puntos 3D Orbbec (coloreada por altura)
+- Nube de puntos 3D Astra core (`/robot/camera/astra/points`) o driver externo (`/camera/...`)
 - Scan del lidar LD19
 - Modelo del robot
 
@@ -143,8 +149,8 @@ cd ~/Escritorio/PROYECTOS/Pedros-Rescue
 | Dispositivo | Puerto Pi | Topic |
 |---|---|---|
 | Lidar LD19 | `/dev/ttyAMA0` (GPIO14/15, UART) | `/ldlidar_node/scan` |
-| Orbbec Astra (depth) | USB (`2bc5:0403`) | `/camera/depth/points` |
-| Orbbec Astra (color) | USB (`2bc5:0501`) | `/camera/color/image_raw` |
+| Orbbec Astra (depth) | USB (`2bc5:0403`) | `/robot/camera/astra/depth/image_raw/compressed`, `/robot/camera/astra/points` |
+| Orbbec Astra (color) | USB (`2bc5:0501`) | `/robot/camera/astra/color/image_raw/compressed` |
 
 Pi config necesaria en `/boot/firmware/config.txt`:
 ```
@@ -169,10 +175,11 @@ podman build -t localhost/pedros-rescue-ros2:jazzy -f ~/pedros/Dockerfile.pi ~/p
 
 ```text
 /ldlidar_node/scan                    LaserScan — lidar LD19
-/camera/depth/points                  PointCloud2 — nube 3D (sin color)
-/camera/depth_registered/points       PointCloud2 — nube 3D con color RGB
-/camera/color/image_raw               Image — RGB Orbbec
-/camera/depth/image_raw               Image — profundidad 16-bit
+/robot/camera/astra/points            PointCloud2 — nube 3D del driver propio
+/robot/camera/astra/color/image_raw/compressed  CompressedImage — RGB Orbbec
+/robot/camera/astra/depth/image_raw/compressed  CompressedImage — profundidad 16-bit
+/camera/depth/points                  PointCloud2 — nube 3D del driver externo astra_sdk
+/camera/depth_registered/points       PointCloud2 — nube 3D RGB del driver externo astra_sdk
 /map                                   OccupancyGrid — mapa SLAM
 /accumulated_pointcloud               PointCloud2 — nube acumulada misión
 ```

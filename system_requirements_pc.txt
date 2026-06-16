@@ -7,15 +7,43 @@ python3-tk
 python3-opencv
 python3-numpy
 python3-colcon-common-extensions
+python3-pil
+python3-matplotlib
 # Herramientas de host usadas por scripts/run_slam_container.sh
 podman
 sshpass
-xacro
+x11-xserver-utils
+ros-<distro>-ament-cmake
+ros-<distro>-ament-cmake-python
+ros-<distro>-rosidl-default-generators
+ros-<distro>-rosidl-default-runtime
 ros-<distro>-rclpy
 ros-<distro>-sensor-msgs
 ros-<distro>-geometry-msgs
 ros-<distro>-std-msgs
+ros-<distro>-std-srvs
+ros-<distro>-nav-msgs
+ros-<distro>-visualization-msgs
 ros-<distro>-message-filters
 ros-<distro>-joy
 ros-<distro>-launch
 ros-<distro>-launch-ros
+ros-<distro>-robot-state-publisher
+ros-<distro>-joint-state-publisher
+ros-<distro>-xacro
+ros-<distro>-tf2-ros
+ros-<distro>-tf2-tools
+ros-<distro>-tf2-sensor-msgs
+ros-<distro>-slam-toolbox
+ros-<distro>-nav2-map-server
+ros-<distro>-nav2-lifecycle-manager
+ros-<distro>-rviz2
+ros-<distro>-image-transport
+ros-<distro>-image-transport-plugins
+ros-<distro>-compressed-image-transport
+ros-<distro>-cv-bridge
+ros-<distro>-rclcpp-components
+ros-<distro>-rmw-cyclonedds-cpp
+
+# External source/ROS package required by src/rescue_bringup/launch/lidar_ld19.launch.py:
+# ldlidar_component

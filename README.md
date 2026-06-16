@@ -95,11 +95,16 @@ PS4 / joy_node   (joystick DERECHO)
 ## Flujo de visión
 
 ```text
-rescue_robot_core / logitech_camera_node  -> /robot/camera/front/image_raw      -> dashboard (video + QR)
-rescue_robot_core / astra_rgbd_camera_node -> /robot/camera/astra/{color,depth,points} -> dashboard + SLAM 3D
+rescue_robot_core / logitech_camera_node  -> /robot/camera/front/image_raw/compressed -> dashboard (video + QR)
+rescue_robot_core / astra_rgbd_camera_node -> /robot/camera/astra/color/image_raw/compressed
+                                           -> /robot/camera/astra/depth/image_raw/compressed
+                                           -> /robot/camera/astra/points
+                                           -> dashboard + acumulador PLY/RViz
 ```
 
-La Astra publica profundidad `16UC1` y nube `PointCloud2` (intrínsecos `fx,fy,cx,cy` configurables).
+La Astra del driver propio publica color/profundidad comprimidos y nube `PointCloud2`
+en el frame `camera_optical_link` del URDF. El driver externo `astra_sdk` sigue
+disponible como opción y publica en `/camera/...`.
 
 ## Manejo tipo tanque (joystick izquierdo)
 
@@ -112,7 +117,7 @@ Conducción + sensores:
 ```bash
 # Raspberry
 ros2 launch rescue_robot_core robot_core.launch.py     # motores + cámaras
-ros2 launch rescue_bringup pi_sensors.launch.py        # lidar + Orbbec
+ros2 launch rescue_bringup pi_sensors.launch.py        # lidar + Astra core + Logitech
 # PC
 ros2 launch rescue_command_station command_station.launch.py   # joy + teleop + dashboard
 ```
@@ -139,3 +144,8 @@ Con contenedores (ver [COMO_EJECUTAR.md](COMO_EJECUTAR.md)):
 - Raspberry: [requirements_raspberry.txt](requirements_raspberry.txt) (incluye dynamixel-sdk, pyserial)
 - Apt/ROS: [system_requirements_pc.txt](system_requirements_pc.txt), [system_requirements_raspberry.txt](system_requirements_raspberry.txt)
 - Reglas udev de hardware: [99-pedros-rescue.rules](99-pedros-rescue.rules)
+
+Dependencias ROS externas no incluidas en el árbol actual:
+
+- Lidar LD19: el launch `rescue_bringup lidar_ld19.launch.py` requiere que el paquete `ldlidar_component` esté instalado o clonado en `src/` antes de compilar.
+- Astra SDK oficial: solo es necesario si se usa `camera_driver:=astra_sdk`; el flujo por defecto usa `rescue_robot_core/astra_rgbd_camera_node`.

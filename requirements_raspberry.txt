@@ -1,4 +1,6 @@
 setuptools
+dynamixel-sdk
+pyserial
 
 # Runtime dependencies are installed from system_requirements_raspberry.txt.
 # OpenCV, NumPy, gpiozero and lgpio are intentionally installed with apt
