@@ -1,0 +1,59 @@
+# ─────────────────────────────────────────────────────────────
+#  Parametros del brazo 6-DOF (lado PC): cinematica, simulacion, GUI.
+#  Los drivers de servos viven en rescue_robot_core/config/servos.yaml.
+# ─────────────────────────────────────────────────────────────
+
+cinematica:
+  ros__parameters:
+    base_height:  0.14
+    L1:           0.22
+    L2:           0.20
+    L3:           0.12
+    tool_length:  0.10
+    joint_order:
+      - "Base"
+      - "Hombro"
+      - "Codo"
+      - "Munieca_P"
+      - "Munieca_Y"
+      - "Munieca_R"
+    # Joints que se dibujan con el giro invertido en la simulacion (el modelo
+    # gira al reves que el servo real). Solo afecta la visualizacion/pose.
+    sim_invert_joints:
+      - "Munieca_P"
+
+simulacion:
+  ros__parameters:
+    # Alcance maximo del brazo (m) para escalar los ejes.
+    reach: 0.74
+
+gui_control:
+  ros__parameters:
+    reach: 0.74
+    joint_order:
+      - "Base"
+      - "Hombro"
+      - "Codo"
+      - "Munieca_P"
+      - "Munieca_Y"
+      - "Munieca_R"
+    # Mapeo joint -> driver ("ax" | "ex") + ID de servo
+    joint_drivers:
+      Base:
+        driver: "ax"
+        id: 16
+      Hombro:
+        driver: "ex"
+        id: 1
+      Codo:
+        driver: "ax"
+        id: 18
+      Munieca_P:
+        driver: "ax"
+        id: 30
+      Munieca_Y:
+        driver: "ax"
+        id: 4
+      Munieca_R:
+        driver: "ax"
+        id: 6

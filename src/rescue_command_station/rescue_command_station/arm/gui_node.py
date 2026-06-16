@@ -11,8 +11,8 @@ Topics suscritos:
   /end_effector_pose      (geometry_msgs/PoseStamped)
   /fk_points              (sensor_msgs/JointState)   — puntos 3D del brazo
   /sim/fk_points_preview  (sensor_msgs/JointState)   — preview IK
-  /ax12a/status           (control_brazo/ArmStatus)
-  /ex106/status           (control_brazo/ArmStatus)
+  /ax12a/status           (rescue_interfaces/ArmStatus)
+  /ex106/status           (rescue_interfaces/ArmStatus)
 
 Topics publicados:
   /ax12a/joint_cmd        (sensor_msgs/JointState)
@@ -22,7 +22,7 @@ Topics publicados:
 Servicios llamados:
   /ax12a|ex106/{connect,disconnect,emergency_stop,resume,
                 calibrate_start,calibrate_confirm,jog,rescue_pulse}
-  /compute_ik             (control_brazo/ComputeIK)
+  /compute_ik             (rescue_interfaces/ComputeIK)
 """
 
 import math
@@ -38,10 +38,10 @@ from geometry_msgs.msg import PoseStamped
 from std_srvs.srv import Trigger
 
 from std_msgs.msg import Float64
-from control_brazo.msg import ArmStatus, CartesianState
-from control_brazo.srv import (ComputeIK, ComputeIKPose, ServoCommand, ServoStatus,
+from rescue_interfaces.msg import ArmStatus, CartesianState
+from rescue_interfaces.srv import (ComputeIK, ComputeIKPose, ServoCommand, ServoStatus,
                                 CartesianGoto, CartesianTrajectory)
-from control_brazo.msg import CartesianWaypoint
+from rescue_interfaces.msg import CartesianWaypoint
 
 import customtkinter as ctk
 

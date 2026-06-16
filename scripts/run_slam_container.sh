@@ -187,7 +187,7 @@ case "${1:-shell}" in
         CMD="source /opt/ros/jazzy/setup.bash && \
              source /workspace/install/setup.bash && \
              echo '━━━ Brazo 6-DOF (SIMULACION, solo PC) ━━━' && \
-             ros2 launch control_brazo arm_station.launch.py sim:=true"
+             ros2 launch rescue_command_station arm_station.launch.py sim:=true"
         ;;
 
     slam-pi)
@@ -265,28 +265,31 @@ case "${1:-shell}" in
 
     # ── Modos que se ejecutan en la Pi via SSH ─────────────────────
     pi|pi-sensors|pi-lidar|pi-camera|pi-stop|pi-logs|pi-build)
-        PI_HOST="sraus@10.42.0.240"
-        PI_PASS="123456"
+        PI_HOST="${PI_HOST:-sraus@10.42.0.240}"
+        # Sin credencial en el script: por defecto usa LLAVE SSH (recomendado).
+        # Para usar contraseña: export PI_PASS="..." antes de correr el script.
+        PI_PASS="${PI_PASS:-}"
+        if [ -n "$PI_PASS" ]; then SSH_WRAP=(sshpass -p "$PI_PASS"); else SSH_WRAP=(); fi
         PI_MODE="${1#pi}"          # "" | "-sensors" | "-lidar" | "-camera" | "-stop" | "-logs" | "-build"
         PI_ARG="${PI_MODE#-}"      # "" | "sensors" | "lidar" | "camera" | "stop" | "logs" | "build"
         [ -z "$PI_ARG" ] && PI_ARG="sensors"
 
         echo "━━━ Sincronizando scripts + launch a Pi... ━━━"
-        sshpass -p "$PI_PASS" scp \
+        "${SSH_WRAP[@]}" scp \
             "$WORKSPACE/scripts/run_pi_sensors.sh" \
             "${PI_HOST}:~/pedros/scripts/run_pi_sensors.sh" 2>/dev/null || true
-        sshpass -p "$PI_PASS" scp \
+        "${SSH_WRAP[@]}" scp \
             "$WORKSPACE/scripts/install_pi_autostart.sh" \
             "${PI_HOST}:~/pedros/scripts/install_pi_autostart.sh" 2>/dev/null || true
-        sshpass -p "$PI_PASS" scp \
+        "${SSH_WRAP[@]}" scp \
             "$WORKSPACE/src/rescue_bringup/launch/pi_sensors.launch.py" \
             "${PI_HOST}:~/pedros/src/rescue_bringup/launch/pi_sensors.launch.py" 2>/dev/null || true
-        sshpass -p "$PI_PASS" scp \
+        "${SSH_WRAP[@]}" scp \
             "$WORKSPACE/src/rescue_bringup/launch/logitech_vision.launch.py" \
             "${PI_HOST}:~/pedros/src/rescue_bringup/launch/logitech_vision.launch.py" 2>/dev/null || true
 
         echo "━━━ Lanzando sensores en Pi (modo: ${PI_ARG}) ━━━"
-        sshpass -p "$PI_PASS" ssh -o StrictHostKeyChecking=no "$PI_HOST" \
+        "${SSH_WRAP[@]}" ssh -o StrictHostKeyChecking=no "$PI_HOST" \
             "chmod +x ~/pedros/scripts/run_pi_sensors.sh && \
              ~/pedros/scripts/run_pi_sensors.sh ${PI_ARG}"
         exit 0

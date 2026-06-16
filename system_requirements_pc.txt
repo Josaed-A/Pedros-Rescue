@@ -7,6 +7,10 @@ python3-tk
 python3-opencv
 python3-numpy
 python3-colcon-common-extensions
+# Herramientas de host usadas por scripts/run_slam_container.sh
+podman
+sshpass
+xacro
 ros-<distro>-rclpy
 ros-<distro>-sensor-msgs
 ros-<distro>-geometry-msgs

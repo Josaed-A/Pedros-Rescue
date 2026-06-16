@@ -15,7 +15,7 @@ Topics publicados:
                            (nombre[i] = "p{i}", position = x,y,z intercalados)
 
 Servicios:
-  /compute_ik             (control_brazo/ComputeIK)
+  /compute_ik             (rescue_interfaces/ComputeIK)
 """
 
 import numpy as np
@@ -25,8 +25,8 @@ from rclpy.node import Node
 from sensor_msgs.msg import JointState
 from geometry_msgs.msg import PoseStamped, Quaternion
 
-from control_brazo.kinematics import Arm6DOF, ArmParams, make_T, rotx, rotz, roty, rot_to_rpy
-from control_brazo.srv import ComputeIK, ComputeIKPose
+from rescue_command_station.arm.kinematics import Arm6DOF, ArmParams, make_T, rotx, rotz, roty, rot_to_rpy
+from rescue_interfaces.srv import ComputeIK, ComputeIKPose
 
 
 def rpy_to_quaternion(roll, pitch, yaw) -> Quaternion:

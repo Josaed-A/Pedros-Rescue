@@ -15,7 +15,7 @@ Responsabilidades:
 
 Topics publicados:
   /joint_states           (sensor_msgs/JointState)
-  /ax12a/status           (control_brazo/ArmStatus)
+  /ax12a/status           (rescue_interfaces/ArmStatus)
 
 Topics suscritos:
   /ax12a/joint_cmd        (sensor_msgs/JointState)
@@ -30,9 +30,9 @@ Servicios:
   /ax12a/resume            (std_srvs/Trigger)
   /ax12a/calibrate_start   (std_srvs/Trigger)
   /ax12a/calibrate_confirm (std_srvs/Trigger)
-  /ax12a/jog               (control_brazo/ServoCommand)
-  /ax12a/rescue_pulse      (control_brazo/ServoCommand)
-  /ax12a/register_servo    (control_brazo/RegisterServo)
+  /ax12a/jog               (rescue_interfaces/ServoCommand)
+  /ax12a/rescue_pulse      (rescue_interfaces/ServoCommand)
+  /ax12a/register_servo    (rescue_interfaces/RegisterServo)
 
 Notas de diseno:
   - _cb_joint_cmd esta bloqueado en modo calibracion — solo jog puede
@@ -52,10 +52,10 @@ from std_srvs.srv import Trigger
 
 from dynamixel_sdk import PortHandler, PacketHandler, COMM_SUCCESS
 
-from control_brazo.servo_params import leer_servos_params, leer_wheels_params
-from control_brazo.wheel_encoder import WheelEncoder
-from control_brazo.msg import ArmStatus
-from control_brazo.srv import ServoCommand, RegisterServo, ServoStatus
+from rescue_robot_core.servos.params import leer_servos_params, leer_wheels_params
+from rescue_robot_core.servos.wheel_encoder import WheelEncoder
+from rescue_interfaces.msg import ArmStatus
+from rescue_interfaces.srv import ServoCommand, RegisterServo, ServoStatus
 
 # Registros Dynamixel protocolo 1.0
 ADDR_CW_LIMIT     =  6

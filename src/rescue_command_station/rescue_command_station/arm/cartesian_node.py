@@ -24,7 +24,7 @@ Topics suscritos:
 Topics publicados:
   /ax12a/joint_cmd       (sensor_msgs/JointState)
   /ex106/joint_cmd       (sensor_msgs/JointState)
-  /cartesian/state       (control_brazo/CartesianState)
+  /cartesian/state       (rescue_interfaces/CartesianState)
 """
 
 import math
@@ -38,7 +38,7 @@ from sensor_msgs.msg import JointState
 from geometry_msgs.msg import PoseStamped
 from std_msgs.msg import Float64
 
-from control_brazo.cartesian_controller import (
+from rescue_command_station.arm.cartesian_controller import (
     linear_trajectory,
     multi_waypoint_trajectory,
     position_error,
@@ -47,8 +47,8 @@ from control_brazo.cartesian_controller import (
     clamp_joints,
     JOINT_LIMITS,
 )
-from control_brazo.srv import CartesianGoto, ComputeIKPose, CartesianTrajectory
-from control_brazo.msg import CartesianState, CartesianWaypoint
+from rescue_interfaces.srv import CartesianGoto, ComputeIKPose, CartesianTrajectory
+from rescue_interfaces.msg import CartesianState, CartesianWaypoint
 
 
 _DEFAULT_JOINT_ORDER = ['Base', 'Hombro', 'Codo', 'Munieca_P', 'Munieca_Y', 'Munieca_R']

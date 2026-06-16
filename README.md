@@ -1,144 +1,141 @@
 # Pedro's Rescue
 
-Plataforma ROS 2 para un robot tipo oruga de RoboCup Rescue.
+Plataforma ROS 2 para un robot tipo oruga de RoboCup Rescue, con **brazo 6-DOF**
+(estabilización de cámara) y **patas** (4 servos de locomoción/postura).
 
-El repo esta organizado en dos paquetes grandes:
+El stack corre repartido en **dos máquinas**:
 
-- `rescue_command_station`: estacion de mando que corre en la PC.
-- `rescue_robot_core`: nucleo del robot que corre en la Raspberry Pi.
+- **PC** (estación de mando): GUIs, SLAM, cinemática del brazo, control de patas.
+- **Raspberry Pi** (núcleo del robot): drivers de hardware (motores, servos, cámaras, lidar).
+
+## Paquetes
+
+| Paquete | Máquina | Tipo | Qué hace |
+|---|---|---|---|
+| `rescue_interfaces` | — | ament_cmake | Mensajes y servicios custom (msg/srv). **Obligatorio aparte** (ROS 2 genera el código con rosidl, que un paquete Python no puede hacer). |
+| `rescue_robot_core` | Pi | ament_python | TODO el hardware: motores (BTS7960), bus de servos Dynamixel (brazo AX-12A + patas) + EX-106+, cámaras. |
+| `rescue_command_station` | PC | ament_python | Estación de mando: dashboard (conducción + **patas**), teleop PS4, y el **módulo `arm/`** (cinemática/cartesiano/GUI del brazo). |
+| `rescue_bringup` | ambas | ament_python | Launch files de orquestación + nodos pegamento (SLAM, detección, geotiff, acumulador de nube). |
+| `rescue_robot_description` | ambas | ament_python | URDF del robot (TF para RViz/SLAM). |
+| `dependencias/` | — | varios | Reimplementaciones mínimas propias de terceros: `cv_bridge`, `joy`. Agrupado para no mezclarlo con los paquetes `rescue_*`. |
+
+> El brazo NO es un paquete aparte: vive como **módulo `arm/` dentro de `rescue_command_station`** (corre en el PC, igual que el dashboard, así que no hay frontera de máquina que justifique separarlo). Las patas tampoco: su **driver** está en `rescue_robot_core` (comparten el bus AX-12A del brazo) y su **control/UI** en el dashboard.
 
 ## Estructura
 
 ```text
 src/
-  rescue_command_station/
+  rescue_interfaces/              # msg/ + srv/ (rosidl)
+
+  rescue_robot_core/              # Pi — hardware
+    rescue_robot_core/
+      camera_drivers/  # publicadores de cámaras
+      config/          # pines, ganancias, perfil S
+      drivers/         # BTS7960 (motores)
+      motion/          # tracción diferencial + perfil S
+      servos/          # wheel_encoder, params (Dynamixel)
+      nodes/           # motor_driver_node, dynamixel_bus_node (brazo+patas),
+                       #   ex106_driver_node, dynamixel_sim_node
+    config/servos.yaml + launch/  (robot_core.launch.py, servos.launch.py)
+
+  rescue_command_station/         # PC — estación de mando
     rescue_command_station/
       control/   # cajas y mezcla tipo tanque
       input/     # lectura del control PS4
-      vision/    # QR y conversion de imagen para GUI
-      nodes/     # nodos ROS 2 de PC
-    launch/      # arranque completo de la estacion de mando
+      vision/    # QR y conversión de imagen para GUI
+      arm/       # BRAZO: kinematics, cartesian_controller, *_node (cinematica/cartesian/gui/sim)
+      nodes/     # dashboard_node (conducción + patas), ps4_teleop_node, rgbd_viewer_node
+    config/arm.yaml + launch/  (command_station.launch.py, arm_station.launch.py)
 
-  rescue_robot_core/
-    rescue_robot_core/
-      camera_drivers/ # publicadores de camaras
-      config/    # pines, ganancias, tiempos y limites
-      drivers/   # salida a hardware BTS7960
-      motion/    # traccion diferencial y perfil S
-      nodes/     # nodos ROS 2 de la Raspberry
-    launch/      # arranque completo del robot
+  rescue_bringup/                 # launch + nodos pegamento
+  rescue_robot_description/       # URDF
+
+  dependencias/                   # terceros: cv_bridge, joy
 ```
 
-## Flujo de control
+## Flujo de control (conducción)
 
 ```text
 PS4 / joy_node
-    -> rescue_command_station / ps4_teleop_node
+    -> rescue_command_station / ps4_teleop_node   (joystick IZQUIERDO)
     -> /cmd_vel
-    -> rescue_robot_core / motor_driver_node
-    -> perfil S
-    -> drivers BTS7960
-    -> motores
+    -> rescue_robot_core / motor_driver_node  -> perfil S -> BTS7960 -> motores
 ```
 
-El robot publica `/real_speed_abs` para que la estacion de mando y el dashboard puedan ver la velocidad real aplicada.
+El robot publica `/real_speed_abs` para que el dashboard vea la velocidad real.
 
-## Flujo de vision
+## Flujo del brazo 6-DOF
 
 ```text
-Camaras en el robot
-    -> rescue_robot_core / logitech_camera_node
-    -> /robot/camera/front/image_raw
-    -> rescue_command_station / dashboard_node
-    -> video frontal en vivo + lector QR
-
-Orbbec Astra en el robot
-    -> rescue_robot_core / astra_rgbd_camera_node
-    -> /robot/camera/astra/color/image_raw
-    -> /robot/camera/astra/depth/image_raw
-    -> /robot/camera/astra/points
-    -> rescue_command_station / dashboard_node
-    -> Astra color + profundidad + estado PointCloud2
+GUI del brazo (rescue_command_station/arm/gui_node)   [se abre desde el dashboard]
+    -> /compute_ik_pose, /cartesian/*   (cinematica_node, cartesian_node — PC)
+    -> /ax12a/joint_cmd  +  /ex106/joint_cmd
+    -> rescue_robot_core / dynamixel_bus_node + ex106_driver_node  (Pi)
+    -> servos AX-12A (brazo) + EX-106+ (hombro)
+    <- /arm/joint_states -> FK -> /end_effector_pose
 ```
 
-La Astra publica imagen de profundidad `sensor_msgs/Image` con encoding `16UC1`
-y una nube de puntos `sensor_msgs/PointCloud2` para usar despues en mapa 3D.
-La nube usa intrinsecos configurables (`fx`, `fy`, `cx`, `cy`) y debe calibrarse
-con los valores reales de la camara antes de usarla para mapeo preciso.
+- IK numérica por Jacobiano (damped least squares); la GUI tiene vista 3D + pinza.
+- `/joint_states` del brazo se remapea a `/arm/joint_states` para no contaminar el `robot_state_publisher` de la base.
 
-## Manejo tipo tanque
+## Flujo de las patas (locomoción)
 
-Todo el movimiento sale del joystick izquierdo:
+```text
+PS4 / joy_node   (joystick DERECHO)
+    -> rescue_command_station / dashboard_node  (panel PATAS)
+    -> /legs/cmd   (eje X = par delantero, eje Y = par trasero; signo = dirección)
+    -> rescue_robot_core / dynamixel_bus_node   (modo rueda, velocidad fija)
+    -> 4 servos AX-12A de las patas (mismo bus que el brazo)
+    <- /legs/state -> grados acumulados en vivo en el dashboard
+```
 
-- Joystick hacia adelante: ambas orugas avanzan.
-- Joystick hacia atras: ambas orugas retroceden.
-- Joystick hacia un lado: las orugas giran en sentidos opuestos.
-- Joystick diagonal: una oruga va mas rapido que la otra.
+- Botones por pata para habilitar/aislar, **calibrar (0°)** y **rehabilitar torque**.
+- Las patas **solo** se mueven desde el dashboard (no desde la GUI del brazo).
 
-No hay acelerador con R2 y no hay habilitacion por Share.
+## Flujo de visión
 
-## Cajas
+```text
+rescue_robot_core / logitech_camera_node  -> /robot/camera/front/image_raw      -> dashboard (video + QR)
+rescue_robot_core / astra_rgbd_camera_node -> /robot/camera/astra/{color,depth,points} -> dashboard + SLAM 3D
+```
 
-Hay 5 cajas positivas:
+La Astra publica profundidad `16UC1` y nube `PointCloud2` (intrínsecos `fx,fy,cx,cy` configurables).
 
-- Caja 1: 20%
-- Caja 2: 40%
-- Caja 3: 60%
-- Caja 4: 80%
-- Caja 5: 100%
+## Manejo tipo tanque (joystick izquierdo)
 
-Controles:
+- Adelante/atrás: ambas orugas avanzan/retroceden. Lado: giran opuestas. Diagonal: una más rápida.
+- `R1`/`L1`: subir/bajar caja. 5 cajas (20/40/60/80/100%). Sin acelerador R2 ni habilitación Share.
 
-- `R1`: subir caja.
-- `L1`: bajar caja.
+## Ejecución
 
-## Paquetes
-
-### `rescue_command_station`
-
-Corre en la PC y contiene:
-
-- `input/ps4_controller.py`: traduce `sensor_msgs/Joy` a un estado simple del control.
-- `control/gearbox.py`: maneja las 5 cajas.
-- `control/tank_drive.py`: convierte joystick izquierdo a oruga izquierda/derecha y `Twist`.
-- `nodes/ps4_teleop_node.py`: publica `/cmd_vel` y `/drive_status`.
-- `nodes/dashboard_node.py`: interfaz Tkinter para monitorear manejo, video en vivo y QR.
-- `nodes/rgbd_viewer_node.py`: visor opcional para color + profundidad de la Astra.
-- `launch/command_station.launch.py`: lanza joy, teleoperacion y GUI juntos.
-- `vision/qr_detector.py`: deteccion y dibujo de codigos QR.
-- `vision/tk_image.py`: conversion de frames OpenCV a imagenes Tkinter.
-
-### `rescue_robot_core`
-
-Corre en la Raspberry Pi y contiene:
-
-- `config/motor_config.py`: pines GPIO, limites, ganancias y parametros del perfil S.
-- `camera_drivers/logitech_camera_node.py`: publica la camara frontal en `/robot/camera/front/image_raw`.
-- `camera_drivers/astra_rgbd_camera_node.py`: publica color, profundidad y nube de puntos de Astra.
-- `camera_drivers/point_cloud.py`: convierte imagen de profundidad a `PointCloud2`.
-- `motion/differential_drive.py`: mezcla diferencial para las dos orugas.
-- `motion/s_curve.py`: funciones matematicas del suavizado.
-- `drivers/bts7960.py`: escritura PWM al puente BTS7960.
-- `nodes/motor_driver_node.py`: nodo ROS 2 que escucha `/cmd_vel` y controla motores.
-- `launch/robot_core.launch.py`: lanza motores, Logitech y Astra juntos.
-
-## Ejecucion
-
-Arranque normal:
-
+Conducción + sensores:
 ```bash
 # Raspberry
-ros2 launch rescue_robot_core robot_core.launch.py
-
+ros2 launch rescue_robot_core robot_core.launch.py     # motores + cámaras
+ros2 launch rescue_bringup pi_sensors.launch.py        # lidar + Orbbec
 # PC
-ros2 launch rescue_command_station command_station.launch.py
+ros2 launch rescue_command_station command_station.launch.py   # joy + teleop + dashboard
 ```
 
-Ver [COMO_EJECUTAR.md](COMO_EJECUTAR.md) para instalacion, parametros y diagnostico.
+Brazo + patas (servos en el mismo bus AX-12A):
+```bash
+# Raspberry — bus de servos (brazo + patas)
+ros2 launch rescue_robot_core servos.launch.py
+# PC — el brazo se abre con el botón "CONTROL DEL BRAZO" del dashboard
+#      (equivale a: ros2 launch rescue_command_station arm_station.launch.py)
+# Patas: se controlan desde el panel PATAS del dashboard (stick derecho).
+```
+
+Con contenedores (ver [COMO_EJECUTAR.md](COMO_EJECUTAR.md)):
+```bash
+./scripts/run_slam_container.sh dashboard    # PC: dashboard (botón brazo, patas)
+./scripts/run_slam_container.sh brazo-sim    # PC: brazo en SIMULACIÓN (sin la Pi)
+./scripts/run_pi_sensors.sh servos           # Pi: bus de servos (brazo + patas)
+```
 
 ## Requisitos
 
-- PC / estacion de mando: [requirements_pc.txt](requirements_pc.txt)
-- Raspberry / nucleo del robot: [requirements_raspberry.txt](requirements_raspberry.txt)
-- Apt/ROS PC: [system_requirements_pc.txt](system_requirements_pc.txt)
-- Apt/ROS Raspberry: [system_requirements_raspberry.txt](system_requirements_raspberry.txt)
+- PC: [requirements_pc.txt](requirements_pc.txt) (incluye customtkinter, matplotlib para la GUI del brazo)
+- Raspberry: [requirements_raspberry.txt](requirements_raspberry.txt) (incluye dynamixel-sdk, pyserial)
+- Apt/ROS: [system_requirements_pc.txt](system_requirements_pc.txt), [system_requirements_raspberry.txt](system_requirements_raspberry.txt)
+- Reglas udev de hardware: [99-pedros-rescue.rules](99-pedros-rescue.rules)

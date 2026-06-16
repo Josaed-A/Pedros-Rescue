@@ -73,7 +73,7 @@ def generate_launch_description():
     )
 
     ps4_node = Node(
-        package='rescue_pc_brain',
+        package='rescue_command_station',
         executable='ps4_teleop_node',
         name='ps4_teleop_node',
         output='screen',
@@ -82,7 +82,7 @@ def generate_launch_description():
     )
 
     dashboard_node = Node(
-        package='rescue_pc_brain',
+        package='rescue_command_station',
         executable='dashboard_node',
         name='dashboard_node',
         output='screen',

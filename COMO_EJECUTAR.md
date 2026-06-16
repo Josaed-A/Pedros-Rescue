@@ -36,9 +36,13 @@ ping 10.42.0.240
 SSH a la Pi y ejecutar en tmux:
 
 ```bash
-ssh sraus@10.42.0.240     # pass: 123456
+# Recomendado: configurar una llave SSH (ssh-copy-id) para no usar contraseña.
+ssh sraus@10.42.0.240
 tmux new -s sensors        # o: tmux attach -t sensors
 ```
+
+> Los scripts (`run_slam_container.sh pi*`) usan llave SSH por defecto. Si necesitas
+> contraseña, expórtala en el entorno (no va en el repo): `export PI_PASS="..."`.
 
 **Opción A — Nativo (recomendado, inmediato):**
 ```bash
@@ -127,7 +131,7 @@ cd ~/Escritorio/PROYECTOS/Pedros-Rescue
 | `./run_pi_sensors.sh` | Lidar + cámara Orbbec (completo) |
 | `./run_pi_sensors.sh lidar` | Solo lidar LD19 |
 | `./run_pi_sensors.sh camera` | Solo cámara Orbbec |
-| `./run_pi_sensors.sh arm` | Solo drivers del brazo (Dynamixel AX-12A + EX-106+) |
+| `./run_pi_sensors.sh servos` | Bus de servos: brazo (AX-12A + EX-106+) + patas |
 | `./run_pi_sensors.sh stop` | Detener contenedor |
 | `./run_pi_sensors.sh logs` | Ver logs en vivo |
 | `./run_pi_sensors.sh build` | Compilar workspace en contenedor |

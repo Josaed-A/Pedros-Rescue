@@ -770,7 +770,7 @@ else:
             return  # ya esta corriendo
         try:
             self._arm_proc = subprocess.Popen(
-                ['ros2', 'launch', 'control_brazo', 'arm_station.launch.py'],
+                ['ros2', 'launch', 'rescue_command_station', 'arm_station.launch.py'],
                 start_new_session=True)
         except Exception as e:
             messagebox.showerror(

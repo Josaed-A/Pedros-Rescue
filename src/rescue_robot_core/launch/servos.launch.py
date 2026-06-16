@@ -1,14 +1,14 @@
-# arm_pi.launch.py — lado Raspberry Pi del brazo 6-DOF para Pedro's Rescue.
+# servos.launch.py — bus de servos del robot (corre en la Raspberry Pi).
 #
-# Lanza SOLO los drivers reales de los Dynamixel (AX-12A + EX-106+) y sus
-# encoders/"contador". La cinematica, el control cartesiano y la GUI corren en
-# el PC (ver arm_station.launch.py).
+# Levanta el driver Dynamixel del bus AX-12A (brazo + PATAS, dynamixel_bus_node)
+# y el driver EX-106+ (hombro). La cinematica/GUI del brazo corren en el PC
+# (ver rescue_command_station/launch/arm_station.launch.py); las patas se controlan desde
+# el dashboard (rescue_command_station).
 #
-#   ros2 launch control_brazo arm_pi.launch.py
+#   ros2 launch rescue_robot_core servos.launch.py
 #
-# Puertos y baudrate vienen de config/servos.yaml (rutas /dev/serial/by-id/...,
-# estables ante reordenamiento de ttyUSB). /joint_states se remapea a
-# /arm/joint_states para no contaminar el robot_state_publisher de la base.
+# /joint_states (brazo) se remapea a /arm/joint_states para no contaminar el
+# robot_state_publisher de la base. Las patas usan /legs/* (sin remapeo).
 
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument
@@ -26,21 +26,19 @@ JS_REMAP = [
 
 def generate_launch_description():
     config = os.path.join(
-        get_package_share_directory('control_brazo'),
-        'config', 'servos.yaml'
-    )
+        get_package_share_directory('rescue_robot_core'), 'config', 'servos.yaml')
     log_level = LaunchConfiguration('log_level')
 
     return LaunchDescription([
         DeclareLaunchArgument('log_level', default_value='info'),
 
         Node(
-            package='control_brazo', executable='ax12a_driver',
+            package='rescue_robot_core', executable='dynamixel_bus_node',
             name='ax12a_driver', parameters=[config], remappings=JS_REMAP,
             arguments=['--ros-args', '--log-level', log_level],
         ),
         Node(
-            package='control_brazo', executable='ex106_driver',
+            package='rescue_robot_core', executable='ex106_driver_node',
             name='ex106_driver', parameters=[config], remappings=JS_REMAP,
             arguments=['--ros-args', '--log-level', log_level],
         ),

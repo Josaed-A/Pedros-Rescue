@@ -44,6 +44,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libusb-1.0-0-dev \
     usbutils \
     python3-pil \
+    python3-gpiozero \
+    python3-lgpio \
     python3-numpy \
     libgflags-dev \
     nlohmann-json3-dev \

@@ -30,10 +30,10 @@ from rclpy.node import Node
 from sensor_msgs.msg import JointState
 from std_srvs.srv import Trigger
 
-from control_brazo.servo_params import leer_servos_params
-from control_brazo.wheel_encoder import WheelEncoder
-from control_brazo.msg import ArmStatus
-from control_brazo.srv import ServoCommand, RegisterServo
+from rescue_robot_core.servos.params import leer_servos_params
+from rescue_robot_core.servos.wheel_encoder import WheelEncoder
+from rescue_interfaces.msg import ArmStatus
+from rescue_interfaces.srv import ServoCommand, RegisterServo
 
 VEL_MAX_DEG_PER_SEC = 120.0
 

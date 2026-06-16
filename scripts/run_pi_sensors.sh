@@ -7,7 +7,7 @@
 #   ./scripts/run_pi_sensors.sh           → sensores completos (lidar + cámara)
 #   ./scripts/run_pi_sensors.sh lidar     → solo lidar LD19
 #   ./scripts/run_pi_sensors.sh camera    → solo cámara Orbbec
-#   ./scripts/run_pi_sensors.sh arm       → solo drivers del brazo (Dynamixel)
+#   ./scripts/run_pi_sensors.sh servos    → bus de servos (brazo + patas Dynamixel)
 #   ./scripts/run_pi_sensors.sh stop      → detener contenedor
 #   ./scripts/run_pi_sensors.sh logs      → ver logs en vivo
 #   ./scripts/run_pi_sensors.sh build     → compilar workspace en contenedor
@@ -98,20 +98,20 @@ case "${1:-sensors}" in
     camera)
         LAUNCH_ARGS="launch_lidar:=false"
         ;;
-    arm)
-        LAUNCH_ARGS="__ARM__"
+    servos|arm)
+        LAUNCH_ARGS="__SERVOS__"
         ;;
     *)
         LAUNCH_ARGS=""
         ;;
 esac
 
-if [ "${LAUNCH_ARGS}" = "__ARM__" ]; then
-    # Solo drivers del brazo (Dynamixel) — cinematica/GUI corren en el PC
+if [ "${LAUNCH_ARGS}" = "__SERVOS__" ]; then
+    # Bus de servos (brazo AX-12A + patas + EX-106+) — cinematica/GUI en el PC
     CMD="source /opt/ros/jazzy/setup.bash && \
          source /workspace/install/setup.bash && \
-         echo '━━━ Brazo Pi: drivers Dynamixel AX-12A + EX-106+ ━━━' && \
-         ros2 launch control_brazo arm_pi.launch.py"
+         echo '━━━ Servos Pi: bus Dynamixel AX-12A (brazo+patas) + EX-106+ ━━━' && \
+         ros2 launch rescue_robot_core servos.launch.py"
 else
     CMD="chmod a+rw /dev/video* 2>/dev/null || true && \
          source /opt/ros/jazzy/setup.bash && \

@@ -11,7 +11,7 @@ Logica identica a ax12a_driver_node con las diferencias:
 
 Topics publicados:
   /joint_states           (sensor_msgs/JointState)
-  /ex106/status           (control_brazo/ArmStatus)
+  /ex106/status           (rescue_interfaces/ArmStatus)
 
 Topics suscritos:
   /ex106/joint_cmd        (sensor_msgs/JointState)
@@ -26,9 +26,9 @@ Servicios:
   /ex106/resume            (std_srvs/Trigger)
   /ex106/calibrate_start   (std_srvs/Trigger)
   /ex106/calibrate_confirm (std_srvs/Trigger)
-  /ex106/jog               (control_brazo/ServoCommand)
-  /ex106/rescue_pulse      (control_brazo/ServoCommand)
-  /ex106/register_servo    (control_brazo/RegisterServo)
+  /ex106/jog               (rescue_interfaces/ServoCommand)
+  /ex106/rescue_pulse      (rescue_interfaces/ServoCommand)
+  /ex106/register_servo    (rescue_interfaces/RegisterServo)
 """
 
 import time
@@ -42,10 +42,10 @@ from std_srvs.srv import Trigger
 
 from dynamixel_sdk import PortHandler, PacketHandler, COMM_SUCCESS
 
-from control_brazo.servo_params import leer_servos_params
-from control_brazo.wheel_encoder import WheelEncoder
-from control_brazo.msg import ArmStatus
-from control_brazo.srv import ServoCommand, RegisterServo, ServoStatus
+from rescue_robot_core.servos.params import leer_servos_params
+from rescue_robot_core.servos.wheel_encoder import WheelEncoder
+from rescue_interfaces.msg import ArmStatus
+from rescue_interfaces.srv import ServoCommand, RegisterServo, ServoStatus
 
 ADDR_CW_LIMIT     =  6
 ADDR_CCW_LIMIT    =  8

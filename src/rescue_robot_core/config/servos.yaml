@@ -1,0 +1,79 @@
+# ─────────────────────────────────────────────────────────────
+#  Configuracion de los servos del robot (drivers de hardware, Pi)
+#  Bus AX-12A (dynamixel_bus_node): brazo + PATAS.  Bus EX-106+ (ex106_driver_node).
+#
+#  Nota: ROS 2 no soporta listas de diccionarios como parametros,
+#  por eso los servos van como mapas anidados (servos.<nombre>.<campo>)
+#  y servo_names/wheel_names definen el conjunto.
+# ─────────────────────────────────────────────────────────────
+
+ax12a_driver:                      # nombre del nodo dynamixel_bus_node
+  ros__parameters:
+    # Ruta estable por-id del U2D2 (FTDI): no depende del orden de conexion.
+    port: "/dev/serial/by-id/usb-FTDI_USB__-__Serial_Converter_FTAKRLUN-if00-port0"
+    baudrate: 1000000
+    loop_rate_hz: 66
+    # ── Brazo (control de posicion) ──
+    servo_names: ["Base", "Codo", "Munieca_P", "Munieca_Y", "Munieca_R"]
+    servos:
+      Base:
+        id: 16
+        reduccion: 27.0
+        deadband_deg: 0.5
+        invertir_giro: false
+      Codo:
+        id: 18
+        reduccion: 27.0
+        deadband_deg: 0.5
+        invertir_giro: false
+      Munieca_P:
+        id: 30
+        reduccion: 27.0
+        deadband_deg: 0.5
+        invertir_giro: true
+      Munieca_Y:
+        id: 4
+        reduccion: 16.0
+        deadband_deg: 0.5
+        invertir_giro: false
+      Munieca_R:
+        id: 6
+        reduccion: 16.0
+        deadband_deg: 0.5
+        invertir_giro: false
+    # ── PATAS (modo rueda, giro continuo) — mismo bus AX-12A ──
+    # IDs y reduccion PROVISIONALES: actualizar con los reales.
+    # velocidad fija de giro (0-100%); el stick solo decide direccion on/off.
+    wheel_speed_pct: 40.0
+    wheel_cmd_timeout_s: 0.4        # si no llegan comandos, las patas se detienen
+    wheel_names: ["PataDelIzq", "PataDelDer", "PataTrasIzq", "PataTrasDer"]
+    wheels:
+      PataDelIzq:                  # delantera izquierda
+        id: 40                     # ID PROVISIONAL
+        reduccion: 4.0             # reduccion PROVISIONAL (x)
+        invertir_giro: false
+      PataDelDer:                  # delantera derecha (lado opuesto -> invertida)
+        id: 41                     # ID PROVISIONAL
+        reduccion: 4.0
+        invertir_giro: true
+      PataTrasIzq:                 # trasera izquierda
+        id: 42                     # ID PROVISIONAL
+        reduccion: 4.0
+        invertir_giro: false
+      PataTrasDer:                 # trasera derecha (lado opuesto -> invertida)
+        id: 43                     # ID PROVISIONAL
+        reduccion: 4.0
+        invertir_giro: true
+
+ex106_driver:                      # nombre del nodo ex106_driver_node
+  ros__parameters:
+    port: "/dev/serial/by-id/usb-1a86_USB_Serial-if00-port0"
+    baudrate: 57600
+    loop_rate_hz: 66
+    servo_names: ["Hombro"]
+    servos:
+      Hombro:
+        id: 1
+        reduccion: 25.0
+        deadband_deg: 0.5
+        invertir_giro: false

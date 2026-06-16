@@ -9,7 +9,7 @@ Publica:
 
 Prerequisitos de hardware:
   • LD19 conectado por USB
-  • Puerto serie configurable con el arg serial_port (default: /dev/ttyUSB0)
+  • Puerto serie configurable con el arg serial_port (default: /dev/ttyAMA0)
 
 Regla udev recomendada para fijar el nombre del dispositivo:
   Crear /etc/udev/rules.d/99-ldlidar.rules con:
@@ -50,7 +50,7 @@ def generate_launch_description():
                 plugin='ldlidar::LdLidarComponent',
                 name='ldlidar_node',
                 namespace='',
-                parameters=[ld19_config],
+                parameters=[ld19_config, {'serial_port': LaunchConfiguration('serial_port')}],
                 extra_arguments=[{'use_intra_process_comms': True}],
             ),
         ],
@@ -65,7 +65,7 @@ def generate_launch_description():
         ),
         DeclareLaunchArgument(
             'serial_port',
-            default_value='/dev/ttyUSB0',
+            default_value='/dev/ttyAMA0',
             description='Puerto serie del LDRobot LD19',
         ),
         ldlidar_container,
