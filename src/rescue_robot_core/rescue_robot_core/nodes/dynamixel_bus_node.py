@@ -93,9 +93,14 @@ class AX12ADriverNode(Node):
         self.declare_parameter('port',         '/dev/ttyUSB0')
         self.declare_parameter('baudrate',     1_000_000)
         self.declare_parameter('loop_rate_hz', 66)
+        # Rampa de desaceleracion al acercarse al objetivo. False (default) =
+        # velocidad PLENA hasta el deadband (el brazo es pesado y la curva lo
+        # dejaba sin fuerza cerca de la meta). True = frenado suave (anti-overshoot).
+        self.declare_parameter('approach_ramp', False)
 
         self._port_name = self.get_parameter('port').value
         self._baudrate  = self.get_parameter('baudrate').value
+        self._approach_ramp = bool(self.get_parameter('approach_ramp').value)
 
         self._port      : PortHandler = None
         self._ph         = PacketHandler(PROTOCOL)
@@ -525,6 +530,30 @@ class AX12ADriverNode(Node):
     # ------------------------------------------------------------------
 
     def _conectar(self):
+        # ── Idempotente: el bus AX-12A es COMPARTIDO (brazo + patas, un solo
+        #    driver). Si ya esta conectado (p.ej. las patas conectaron primero
+        #    desde el dashboard), NO se reabre el puerto ni se arranca otro hilo
+        #    de control —eso pondria dos hilos sobre el mismo serial y el brazo
+        #    "no detectaria" los AX-12A—. Solo se re-pinguean los servos que aun
+        #    no estaban activos (p.ej. los del brazo) y se activan.
+        if self._conectado and self._port is not None:
+            with self._enc_lock:
+                ids = list(self._encoders.keys())
+            for sid in ids:
+                if sid in self._activos:
+                    continue
+                with self._lock:
+                    _, comm, _ = self._ph.ping(self._port, sid)
+                if comm == COMM_SUCCESS:
+                    self._write2(sid, ADDR_CW_LIMIT,  0)
+                    self._write2(sid, ADDR_CCW_LIMIT, 0)
+                    self._write1(sid, ADDR_TORQUE_EN, 1)
+                    with self._enc_lock:
+                        self._activos.add(sid)
+                        self._encoders[sid].reset_full()
+            nombres_on = [self._nombres.get(s, str(s)) for s in sorted(self._activos)]
+            return True, f'Bus ya conectado. Servos activos: {", ".join(nombres_on)}'
+
         self._port = PortHandler(self._port_name)
         if not self._port.openPort():
             return False, f'No se pudo abrir {self._port_name}'
@@ -700,7 +729,10 @@ class AX12ADriverNode(Node):
                     ae = abs(error)
                     # Minimos altos: con reduccion 27:1, por debajo de ~9%
                     # el servo no vence la friccion y se atasca cerca del objetivo
-                    if   ae < 1:  vel = max(9,  int(enc.vel_pct * 0.12))
+                    if not self._approach_ramp:
+                        # Sin curva: velocidad plena hasta el deadband.
+                        vel = enc.vel_pct
+                    elif ae < 1:  vel = max(9,  int(enc.vel_pct * 0.12))
                     elif ae < 3:  vel = max(11, int(enc.vel_pct * 0.22))
                     elif ae < 8:  vel = max(14, int(enc.vel_pct * 0.42))
                     elif ae < 20: vel = max(16, int(enc.vel_pct * 0.65))
@@ -730,7 +762,8 @@ def main(args=None):
         pass
     finally:
         node.destroy_node()
-        rclpy.shutdown()
+        if rclpy.ok():
+            rclpy.shutdown()
 
 
 if __name__ == '__main__':

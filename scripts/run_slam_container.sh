@@ -265,7 +265,7 @@ case "${1:-shell}" in
 
     # ── Modos que se ejecutan en la Pi via SSH ─────────────────────
     pi|pi-sensors|pi-lidar|pi-camera|pi-stop|pi-logs|pi-build)
-        PI_HOST="${PI_HOST:-sraus@10.42.0.240}"
+        PI_HOST="${PI_HOST:-gardian@10.42.0.240}"
         # Sin credencial en el script: por defecto usa LLAVE SSH (recomendado).
         # Para usar contraseña: export PI_PASS="..." antes de correr el script.
         PI_PASS="${PI_PASS:-}"

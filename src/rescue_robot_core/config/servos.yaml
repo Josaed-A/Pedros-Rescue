@@ -9,8 +9,9 @@
 
 ax12a_driver:                      # nombre del nodo dynamixel_bus_node
   ros__parameters:
-    # Ruta estable por-id del U2D2 (FTDI): no depende del orden de conexion.
-    port: "/dev/serial/by-id/usb-FTDI_USB__-__Serial_Converter_FTAKRLUN-if00-port0"
+    # Symlink estable creado por udev (99-pedros-rescue.rules → /dev/ax12a).
+    # Alternativa by-id: /dev/serial/by-id/usb-FTDI_USB__-__Serial_Converter_FTAKRLUN-if00-port0
+    port: "/dev/ax12a"
     baudrate: 1000000
     loop_rate_hz: 66
     # ── Brazo (control de posicion) ──
@@ -49,25 +50,27 @@ ax12a_driver:                      # nombre del nodo dynamixel_bus_node
     wheel_names: ["PataDelIzq", "PataDelDer", "PataTrasIzq", "PataTrasDer"]
     wheels:
       PataDelIzq:                  # delantera izquierda
-        id: 40                     # ID PROVISIONAL
-        reduccion: 4.0             # reduccion PROVISIONAL (x)
+        id: 21
+        reduccion: 64.0          # reduccion PROVISIONAL (x)
         invertir_giro: false
       PataDelDer:                  # delantera derecha (lado opuesto -> invertida)
-        id: 41                     # ID PROVISIONAL
-        reduccion: 4.0
+        id: 22
+        reduccion: 64.0
         invertir_giro: true
       PataTrasIzq:                 # trasera izquierda
-        id: 42                     # ID PROVISIONAL
-        reduccion: 4.0
+        id: 23
+        reduccion: 64.0
         invertir_giro: false
       PataTrasDer:                 # trasera derecha (lado opuesto -> invertida)
-        id: 43                     # ID PROVISIONAL
-        reduccion: 4.0
+        id: 24
+        reduccion: 64.0
         invertir_giro: true
 
 ex106_driver:                      # nombre del nodo ex106_driver_node
   ros__parameters:
-    port: "/dev/serial/by-id/usb-1a86_USB_Serial-if00-port0"
+    # Symlink estable creado por udev (99-pedros-rescue.rules → /dev/ex106).
+    # Alternativa by-id: /dev/serial/by-id/usb-1a86_USB_Serial-if00-port0
+    port: "/dev/ex106"
     baudrate: 57600
     loop_rate_hz: 66
     servo_names: ["Hombro"]

@@ -113,30 +113,42 @@ disponible como opción y publica en `/camera/...`.
 
 ## Ejecución
 
-Conducción + sensores:
+El sistema completo se lanza con un launch por máquina. Primero la Pi, luego el PC.
+
 ```bash
-# Raspberry
-ros2 launch rescue_robot_core robot_core.launch.py     # motores + cámaras
-ros2 launch rescue_bringup pi_sensors.launch.py        # lidar + Astra core + Logitech
-# PC
-ros2 launch rescue_command_station command_station.launch.py   # joy + teleop + dashboard
+# Pi gardian
+ssh gardian
+cd ~/pedros
+source scripts/ros_net_pi.sh
+ros2 launch rescue_bringup pedro_pi.launch.py
 ```
 
-Brazo + patas (servos en el mismo bus AX-12A):
 ```bash
-# Raspberry — bus de servos (brazo + patas)
-ros2 launch rescue_robot_core servos.launch.py
-# PC — el brazo se abre con el botón "CONTROL DEL BRAZO" del dashboard
-#      (equivale a: ros2 launch rescue_command_station arm_station.launch.py)
-# Patas: se controlan desde el panel PATAS del dashboard (stick derecho).
+# PC estacion de mando
+cd /home/semillero/Pedros-Rescue
+source scripts/ros_net_pc.sh
+ros2 launch rescue_bringup pedro_pc.launch.py
 ```
 
-Con contenedores (ver [COMO_EJECUTAR.md](COMO_EJECUTAR.md)):
+`pedro_pi.launch.py` levanta red DDS, TF, LD19, camaras detectadas, motores BTS7960 y servos Dynamixel. Las camaras usan autodeteccion por defecto: si no hay Orbbec/Logitech conectadas, se saltan para no llenar el log de errores de `/dev/video*`.
+
+`pedro_pc.launch.py` levanta red DDS, `slam_toolbox`, RViz, dashboard, `joy_node` y teleop PS4. Los argumentos principales son:
+
 ```bash
-./scripts/run_slam_container.sh dashboard    # PC: dashboard (botón brazo, patas)
-./scripts/run_slam_container.sh brazo-sim    # PC: brazo en SIMULACIÓN (sin la Pi)
-./scripts/run_pi_sensors.sh servos           # Pi: bus de servos (brazo + patas)
+ros2 launch rescue_bringup pedro_pc.launch.py launch_rviz:=false
+ros2 launch rescue_bringup pedro_pc.launch.py launch_dashboard:=false
+ros2 launch rescue_bringup pedro_pc.launch.py network:=cable
+ros2 launch rescue_bringup pedro_pc.launch.py network:=wifi
 ```
+
+Para hardware completo deben existir estos dispositivos:
+
+- PC: control PS4 como `/dev/input/js0`.
+- Pi: LD19 respondiendo en `/dev/ttyAMA0` a `230400`.
+- Pi: Orbbec Astra USB y Logitech USB si se quiere vision.
+- Pi: bus AX-12A como `/dev/ax12a` y EX-106+ como `/dev/ex106`.
+
+La prueba actual valida red PC-Pi, RViz, `slam_toolbox`, dashboard, motores y nodos de servos. Quedan por corregir fisicamente: el LD19 abre `/dev/ttyAMA0` pero responde `LDLidar communication KO`, no hay PS4 en `/dev/input/js0`, no hay Orbbec/Logitech USB detectadas y falta el enlace `/dev/ax12a`.
 
 ## Requisitos
 
@@ -149,3 +161,4 @@ Dependencias ROS externas no incluidas en el árbol actual:
 
 - Lidar LD19: el launch `rescue_bringup lidar_ld19.launch.py` requiere que el paquete `ldlidar_component` esté instalado o clonado en `src/` antes de compilar.
 - Astra SDK oficial: solo es necesario si se usa `camera_driver:=astra_sdk`; el flujo por defecto usa `rescue_robot_core/astra_rgbd_camera_node`.
+- PC con ROS 2 Jazzy compilado desde fuente: usar `source scripts/ros_net_pc.sh`; ese script agrega las librerias vendor (`yaml_cpp_vendor`, `gz_math_vendor`, etc.) al `LD_LIBRARY_PATH` para que RViz cargue plugins correctamente.

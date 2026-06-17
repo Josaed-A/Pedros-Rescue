@@ -29,12 +29,13 @@ from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
 from launch.actions import (
     DeclareLaunchArgument,
+    ExecuteProcess,
     IncludeLaunchDescription,
     TimerAction,
 )
 from launch.conditions import IfCondition
 from launch.launch_description_sources import PythonLaunchDescriptionSource
-from launch.substitutions import LaunchConfiguration
+from launch.substitutions import EnvironmentVariable, LaunchConfiguration, PathJoinSubstitution
 from launch_ros.actions import Node
 
 
@@ -44,8 +45,10 @@ def generate_launch_description():
     launch_rviz       = LaunchConfiguration('launch_rviz',    default='true')
     launch_lidar      = LaunchConfiguration('launch_lidar',   default='true')
     launch_camera     = LaunchConfiguration('launch_camera',  default='true')
+    launch_robot_description = LaunchConfiguration('launch_robot_description', default='true')
     launch_detector   = LaunchConfiguration('launch_detector', default='false')
     hazmat_model_path = LaunchConfiguration('hazmat_model',   default='')
+    output_dir        = LaunchConfiguration('output_dir')
 
     pkg_bringup = get_package_share_directory('rescue_bringup')
 
@@ -55,6 +58,7 @@ def generate_launch_description():
             os.path.join(pkg_bringup, 'launch', 'robot_description.launch.py')
         ),
         launch_arguments={'use_sim_time': use_sim_time}.items(),
+        condition=IfCondition(launch_robot_description),
     )
 
     # ── 2. Driver LDRobot LD19 ────────────────────────────────────
@@ -90,7 +94,7 @@ def generate_launch_description():
                     'base_frame': 'base_footprint',
                     'mode': 'mapping',
                     'use_map_saver': False,
-                    'use_lifecycle_manager': True,
+                    'use_lifecycle_manager': False,
                     'debug_logging': False,
                     'resolution': 0.05,
                     'max_laser_range': 12.0,
@@ -112,22 +116,23 @@ def generate_launch_description():
         ],
     )
 
-    # ── 4. Lifecycle manager para slam_toolbox ────────────────────
-    # Se retrasa 1 s más que slam_toolbox para que el nodo ya esté
-    # registrado. autostart: true → configura y activa automáticamente.
-    slam_lifecycle_manager = TimerAction(
+    # ── 4. Activación lifecycle para slam_toolbox ─────────────────
+    # Evita depender de nav2_lifecycle_manager en el PC de mando.
+    configure_slam = TimerAction(
         period=6.5,
         actions=[
-            Node(
-                package='nav2_lifecycle_manager',
-                executable='lifecycle_manager',
-                name='slam_lifecycle_manager',
+            ExecuteProcess(
+                cmd=['ros2', 'lifecycle', 'set', '/slam_toolbox', 'configure'],
                 output='screen',
-                parameters=[{
-                    'use_sim_time': False,
-                    'autostart': True,
-                    'node_names': ['slam_toolbox'],
-                }],
+            )
+        ],
+    )
+    activate_slam = TimerAction(
+        period=8.0,
+        actions=[
+            ExecuteProcess(
+                cmd=['ros2', 'lifecycle', 'set', '/slam_toolbox', 'activate'],
+                output='screen',
             )
         ],
     )
@@ -157,7 +162,7 @@ def generate_launch_description():
                 name='pointcloud_accumulator',
                 output='screen',
                 parameters=[{
-                    'output_dir':  '/workspace/maps',
+                    'output_dir':  output_dir,
                     'team_name':   'SabanaHerons',
                     'mission':     'M1',
                     'voxel_size':  0.02,
@@ -181,7 +186,7 @@ def generate_launch_description():
                 name='geotiff_writer',
                 output='screen',
                 parameters=[{
-                    'output_dir':  '/workspace/maps',
+                    'output_dir':  output_dir,
                     'team_name':   'SabanaHerons',
                     'mission':     'M1',
                     'path_step_m': 0.08,
@@ -203,7 +208,7 @@ def generate_launch_description():
                 output='screen',
                 condition=IfCondition(launch_detector),
                 parameters=[{
-                    'output_dir':    '/workspace/maps',
+                    'output_dir':    output_dir,
                     'team_name':     'SabanaHerons',
                     'mission':       'M1',
                     'robot_name':    'Pedro',
@@ -262,6 +267,11 @@ def generate_launch_description():
             description='Lanzar driver cámara (false si ya corre en Pi)',
         ),
         DeclareLaunchArgument(
+            'launch_robot_description',
+            default_value='true',
+            description='Publicar URDF/TF del robot desde este launch',
+        ),
+        DeclareLaunchArgument(
             'launch_detector',
             default_value='false',
             description='Lanzar object_detector (AprilTag + hazmat YOLO + objetos YOLO)',
@@ -271,11 +281,17 @@ def generate_launch_description():
             default_value='',
             description='Ruta al modelo hazmat entrenado (.pt). Vacío = usar detector HSV',
         ),
+        DeclareLaunchArgument(
+            'output_dir',
+            default_value=PathJoinSubstitution([EnvironmentVariable('HOME'), 'maps']),
+            description='Directorio para GeoTIFF, PLY y CSV de mision',
+        ),
         robot_description_launch,
         lidar_launch,
         camera_launch,
         slam_node,
-        slam_lifecycle_manager,
+        configure_slam,
+        activate_slam,
         pc_accum_node,
         geotiff_node,
         detector_node,

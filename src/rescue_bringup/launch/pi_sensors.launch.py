@@ -31,7 +31,7 @@ from launch.actions import (
 )
 from launch.conditions import IfCondition, LaunchConfigurationEquals
 from launch.launch_description_sources import PythonLaunchDescriptionSource
-from launch.substitutions import LaunchConfiguration
+from launch.substitutions import EnvironmentVariable, LaunchConfiguration, PathJoinSubstitution
 from launch_ros.actions import Node
 from launch_ros.parameter_descriptions import ParameterValue
 
@@ -40,12 +40,15 @@ def generate_launch_description():
     launch_camera   = LaunchConfiguration('launch_camera',   default='true')
     launch_lidar    = LaunchConfiguration('launch_lidar',    default='true')
     launch_logitech = LaunchConfiguration('launch_logitech', default='true')
+    launch_robot_description = LaunchConfiguration('launch_robot_description', default='true')
     hazmat_model    = LaunchConfiguration('hazmat_model',    default='')
     camera_driver   = LaunchConfiguration('camera_driver',   default='astra_core')
     astra_depth_index = LaunchConfiguration('astra_depth_index', default='-1')
     astra_color_index = LaunchConfiguration('astra_color_index', default='2')
     astra_fps = LaunchConfiguration('astra_fps', default='30')
     jpeg_quality = LaunchConfiguration('jpeg_quality', default='80')
+    logitech_device = LaunchConfiguration('logitech_device', default='0')
+    output_dir = LaunchConfiguration('output_dir')
 
     pkg_bringup = get_package_share_directory('rescue_bringup')
 
@@ -54,6 +57,7 @@ def generate_launch_description():
         PythonLaunchDescriptionSource(
             os.path.join(pkg_bringup, 'launch', 'robot_description.launch.py')
         ),
+        condition=IfCondition(launch_robot_description),
     )
 
     # ── 2. LD19 lidar ───────────────────────────────────────────────
@@ -149,10 +153,11 @@ def generate_launch_description():
                     os.path.join(pkg_bringup, 'launch', 'logitech_vision.launch.py')
                 ),
                 launch_arguments={
-                    'device':        '0',
+                    'device':        logitech_device,
                     'fps':           '15',
                     'hazmat_model':  hazmat_model,
                     'enable_yolo':   'true',
+                    'output_dir':    output_dir,
                 }.items(),
                 condition=IfCondition(launch_logitech),
             )
@@ -176,6 +181,11 @@ def generate_launch_description():
             description='Lanzar cámara Logitech frontal + object_detector',
         ),
         DeclareLaunchArgument(
+            'launch_robot_description',
+            default_value='true',
+            description='Publicar URDF/TF del robot desde la Pi',
+        ),
+        DeclareLaunchArgument(
             'camera_driver',
             default_value='astra_core',
             description='Driver Astra: astra_core (propio) | astra_sdk (externo)',
@@ -184,6 +194,12 @@ def generate_launch_description():
         DeclareLaunchArgument('astra_color_index', default_value='2'),
         DeclareLaunchArgument('astra_fps', default_value='30'),
         DeclareLaunchArgument('jpeg_quality', default_value='80'),
+        DeclareLaunchArgument('logitech_device', default_value='0'),
+        DeclareLaunchArgument(
+            'output_dir',
+            default_value=PathJoinSubstitution([EnvironmentVariable('HOME'), 'maps']),
+            description='Directorio para salidas de vision en la Pi',
+        ),
         DeclareLaunchArgument(
             'hazmat_model',
             default_value='',

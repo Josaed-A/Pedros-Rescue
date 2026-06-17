@@ -227,7 +227,8 @@ class MotorDriverNode(Node):
         self.left_lpwm.value = 0.0
         self.right_rpwm.value = 0.0
         self.right_lpwm.value = 0.0
-        self.publish_real_speed()
+        if rclpy.ok():
+            self.publish_real_speed()
 
     def safety_check(self):
         elapsed = (self.get_clock().now() - self.last_cmd_time).nanoseconds / 1e9
@@ -327,4 +328,5 @@ def main(args=None):
     finally:
         node.shutdown_motors()
         node.destroy_node()
-        rclpy.shutdown()
+        if rclpy.ok():
+            rclpy.shutdown()

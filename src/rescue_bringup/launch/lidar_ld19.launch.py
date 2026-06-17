@@ -21,9 +21,9 @@ import os
 
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
-from launch.actions import DeclareLaunchArgument
+from launch.actions import DeclareLaunchArgument, ExecuteProcess, TimerAction
 from launch.substitutions import LaunchConfiguration
-from launch_ros.actions import ComposableNodeContainer
+from launch_ros.actions import ComposableNodeContainer, LoadComposableNodes
 from launch_ros.descriptions import ComposableNode
 
 
@@ -36,25 +36,52 @@ def generate_launch_description():
         'ld19_params.yaml',
     )
 
+    ldlidar_component = ComposableNode(
+        package='ldlidar_component',
+        plugin='ldlidar::LdLidarComponent',
+        name='ldlidar_node',
+        namespace='',
+        parameters=[ld19_config, {'serial_port': LaunchConfiguration('serial_port')}],
+        extra_arguments=[{'use_intra_process_comms': True}],
+    )
+
     # ── Container con el componente LDLidar ──────────────────────
-    # El componente publica ~/scan → /ldlidar_node/scan
-    # Sin nav2_lifecycle_manager (no disponible en Pi — solo SLAM PC)
+    # El componente publica ~/scan → /ldlidar_node/scan.
     ldlidar_container = ComposableNodeContainer(
         name='ldlidar_container',
         namespace='',
         package='rclcpp_components',
         executable='component_container_isolated',
-        composable_node_descriptions=[
-            ComposableNode(
-                package='ldlidar_component',
-                plugin='ldlidar::LdLidarComponent',
-                name='ldlidar_node',
-                namespace='',
-                parameters=[ld19_config, {'serial_port': LaunchConfiguration('serial_port')}],
-                extra_arguments=[{'use_intra_process_comms': True}],
-            ),
-        ],
+        composable_node_descriptions=[],
         output='screen',
+    )
+
+    load_ldlidar = TimerAction(
+        period=2.0,
+        actions=[
+            LoadComposableNodes(
+                target_container=ldlidar_container,
+                composable_node_descriptions=[ldlidar_component],
+            )
+        ],
+    )
+    configure_ldlidar = TimerAction(
+        period=4.0,
+        actions=[
+            ExecuteProcess(
+                cmd=['ros2', 'lifecycle', 'set', '/ldlidar_node', 'configure'],
+                output='screen',
+            )
+        ],
+    )
+    activate_ldlidar = TimerAction(
+        period=6.0,
+        actions=[
+            ExecuteProcess(
+                cmd=['ros2', 'lifecycle', 'set', '/ldlidar_node', 'activate'],
+                output='screen',
+            )
+        ],
     )
 
     return LaunchDescription([
@@ -69,4 +96,7 @@ def generate_launch_description():
             description='Puerto serie del LDRobot LD19',
         ),
         ldlidar_container,
+        load_ldlidar,
+        configure_ldlidar,
+        activate_ldlidar,
     ])

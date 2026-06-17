@@ -739,9 +739,9 @@ class App(ctk.CTk):
         ctk.CTkLabel(vel_row, text='Velocidad:').grid(row=0, column=0, padx=4)
         self.sld_vel = ctk.CTkSlider(vel_row, from_=1, to=100,
                                      command=self._on_vel_slider)
-        self.sld_vel.set(30)
+        self.sld_vel.set(100)
         self.sld_vel.grid(row=0, column=1, sticky='ew', padx=4)
-        self.lbl_vel = ctk.CTkLabel(vel_row, text='30 %', width=46)
+        self.lbl_vel = ctk.CTkLabel(vel_row, text='100 %', width=46)
         self.lbl_vel.grid(row=0, column=2, padx=4)
 
         # ── Pestanas de control ───────────────────────────────────

@@ -14,7 +14,7 @@ Uso:
 
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument, TimerAction
-from launch.substitutions import LaunchConfiguration
+from launch.substitutions import EnvironmentVariable, LaunchConfiguration, PathJoinSubstitution
 from launch_ros.actions import Node
 
 
@@ -23,6 +23,7 @@ def generate_launch_description():
     hazmat_model = LaunchConfiguration('hazmat_model', default='')
     enable_yolo  = LaunchConfiguration('enable_yolo',  default='true')
     fps          = LaunchConfiguration('fps',           default='15')
+    output_dir   = LaunchConfiguration('output_dir')
 
     camera_node = Node(
         package='rescue_bringup',
@@ -46,7 +47,7 @@ def generate_launch_description():
                 name='object_detector',
                 output='screen',
                 parameters=[{
-                    'output_dir':        '/workspace/maps',
+                    'output_dir':        output_dir,
                     'team_name':         'SabanaHerons',
                     'mission':           'M1',
                     'robot_name':        'Pedro',
@@ -72,6 +73,11 @@ def generate_launch_description():
         DeclareLaunchArgument('hazmat_model', default_value='',   description='Ruta al .pt o .onnx. Vacío = HSV'),
         DeclareLaunchArgument('enable_yolo',  default_value='true', description='Habilitar YOLO COCO'),
         DeclareLaunchArgument('fps',          default_value='15', description='FPS de captura'),
+        DeclareLaunchArgument(
+            'output_dir',
+            default_value=PathJoinSubstitution([EnvironmentVariable('HOME'), 'maps']),
+            description='Directorio para CSV de detecciones',
+        ),
         camera_node,
         detector_node,
     ])

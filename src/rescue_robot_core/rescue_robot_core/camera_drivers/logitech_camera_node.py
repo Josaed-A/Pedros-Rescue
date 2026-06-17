@@ -204,4 +204,5 @@ def main(args=None):
     finally:
         node.shutdown_camera()
         node.destroy_node()
-        rclpy.shutdown()
+        if rclpy.ok():
+            rclpy.shutdown()

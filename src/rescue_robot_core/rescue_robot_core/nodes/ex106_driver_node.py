@@ -82,9 +82,12 @@ class EX106DriverNode(Node):
         self.declare_parameter('port',         '/dev/ttyUSB1')
         self.declare_parameter('baudrate',     57_600)
         self.declare_parameter('loop_rate_hz', 66)
+        # Rampa de desaceleracion (ver dynamixel_bus_node). False = velocidad plena.
+        self.declare_parameter('approach_ramp', False)
 
         self._port_name = self.get_parameter('port').value
         self._baudrate  = self.get_parameter('baudrate').value
+        self._approach_ramp = bool(self.get_parameter('approach_ramp').value)
 
         self._port      : PortHandler = None
         self._ph         = PacketHandler(PROTOCOL)
@@ -413,6 +416,26 @@ class EX106DriverNode(Node):
     # ------------------------------------------------------------------
 
     def _conectar(self):
+        # Idempotente: si ya esta conectado, re-pinguear inactivos sin reabrir
+        # el puerto ni arrancar otro hilo de control (ver dynamixel_bus_node).
+        if self._conectado and self._port is not None:
+            with self._enc_lock:
+                ids = list(self._encoders.keys())
+            for sid in ids:
+                if sid in self._activos:
+                    continue
+                with self._lock:
+                    _, comm, _ = self._ph.ping(self._port, sid)
+                if comm == COMM_SUCCESS:
+                    self._write2(sid, ADDR_CW_LIMIT,  0)
+                    self._write2(sid, ADDR_CCW_LIMIT, 0)
+                    self._write1(sid, ADDR_TORQUE_EN, 1)
+                    with self._enc_lock:
+                        self._activos.add(sid)
+                        self._encoders[sid].reset_full()
+            nombres_on = [self._nombres.get(s, str(s)) for s in sorted(self._activos)]
+            return True, f'Bus ya conectado. Servos activos: {", ".join(nombres_on)}'
+
         self._port = PortHandler(self._port_name)
         if not self._port.openPort():
             return False, f'No se pudo abrir {self._port_name}'
@@ -573,7 +596,10 @@ class EX106DriverNode(Node):
                     ae = abs(error)
                     # Minimos altos: con reduccion alta, por debajo de ~9%
                     # el servo no vence la friccion y se atasca cerca del objetivo
-                    if   ae < 1:  vel = max(9,  int(enc.vel_pct * 0.12))
+                    if not self._approach_ramp:
+                        # Sin curva: velocidad plena hasta el deadband.
+                        vel = enc.vel_pct
+                    elif ae < 1:  vel = max(9,  int(enc.vel_pct * 0.12))
                     elif ae < 3:  vel = max(11, int(enc.vel_pct * 0.22))
                     elif ae < 8:  vel = max(14, int(enc.vel_pct * 0.42))
                     elif ae < 20: vel = max(16, int(enc.vel_pct * 0.65))
@@ -601,7 +627,8 @@ def main(args=None):
         pass
     finally:
         node.destroy_node()
-        rclpy.shutdown()
+        if rclpy.ok():
+            rclpy.shutdown()
 
 
 if __name__ == '__main__':

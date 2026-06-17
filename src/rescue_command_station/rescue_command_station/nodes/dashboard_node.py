@@ -1,7 +1,9 @@
 import csv
 import datetime
 import json
+import math
 import os
+import signal
 import subprocess
 import threading
 import tkinter as tk
@@ -489,6 +491,56 @@ class ModernDashboardApp:
                  bg=COLORS['surface'], fg=COLORS['muted'],
                  font=(FONT, 9, 'bold'), anchor='w').pack(fill='x')
 
+        # ── Diagrama VISTA LATERAL: cuerpo del robot + patas como lineas ──
+        # Vista de costado = el plano en que giran las patas (referencia clara
+        # de donde esta cada una, como manecilla de reloj). FRENTE a la derecha.
+        # 0° = delanteras hacia ADELANTE (derecha), traseras hacia ATRAS (izq).
+        # Color por lado: Izq = cyan, Der = azul; gris si esta deshabilitada.
+        self._legs_canvas = tk.Canvas(panel, width=290, height=120,
+                                      bg=COLORS['surface'], highlightthickness=0)
+        self._legs_canvas.pack(pady=(4, 6))
+        bx0, by0, bx1, by1 = 78, 44, 212, 80
+        cy = (by0 + by1) // 2
+        self._legs_canvas.create_rectangle(bx0, by0, bx1, by1,
+                                           outline=COLORS['muted'], width=2,
+                                           fill=COLORS['surface_high'])
+        self._legs_canvas.create_text(bx1 + 24, cy, text='FRENTE',
+                                      fill=COLORS['muted'], font=(FONT, 7, 'bold'))
+        self._legs_canvas.create_text(bx0 - 22, cy, text='ATRAS',
+                                      fill=COLORS['muted'], font=(FONT, 7, 'bold'))
+        self._leg_len = 34
+        # hip (x, y) y angulo base (canvas: x derecha, y abajo).
+        #   0   = hacia adelante (derecha)  -> patas delanteras
+        #   180 = hacia atras (izquierda)   -> patas traseras
+        self._leg_geom = {
+            'PataDelIzq':  (bx1 - 26, cy,   0.0),
+            'PataDelDer':  (bx1 - 12, cy,   0.0),
+            'PataTrasIzq': (bx0 + 26, cy, 180.0),
+            'PataTrasDer': (bx0 + 12, cy, 180.0),
+        }
+        self._leg_color = {
+            'PataDelIzq':  COLORS['cyan'], 'PataDelDer':  COLORS['blue'],
+            'PataTrasIzq': COLORS['cyan'], 'PataTrasDer': COLORS['blue'],
+        }
+        self._leg_lines = {}
+        for name, (hx, hy, base) in self._leg_geom.items():
+            self._legs_canvas.create_oval(hx - 2, hy - 2, hx + 2, hy + 2,
+                                          fill=COLORS['muted'], outline='')
+            a = math.radians(base)
+            ln = self._legs_canvas.create_line(
+                hx, hy, hx + self._leg_len * math.cos(a), hy + self._leg_len * math.sin(a),
+                fill=self._leg_color[name], width=3, capstyle='round')
+            self._leg_lines[name] = ln
+        # Leyenda de lados
+        self._legs_canvas.create_line(bx0, by1 + 16, bx0 + 12, by1 + 16,
+                                      fill=COLORS['cyan'], width=3)
+        self._legs_canvas.create_text(bx0 + 16, by1 + 16, text='Izq',
+                                      fill=COLORS['muted'], font=(FONT, 7), anchor='w')
+        self._legs_canvas.create_line(bx0 + 48, by1 + 16, bx0 + 60, by1 + 16,
+                                      fill=COLORS['blue'], width=3)
+        self._legs_canvas.create_text(bx0 + 64, by1 + 16, text='Der',
+                                      fill=COLORS['muted'], font=(FONT, 7), anchor='w')
+
         self._leg_val_labels = {}
         self._leg_vars = {}
         for name in LEG_NAMES:
@@ -816,6 +868,18 @@ else:
         for name, lbl in self._leg_val_labels.items():
             deg = self.ros_node.legs_pos_deg.get(name, 0.0)
             lbl.configure(text=f'{deg:+.1f}°')
+            # Rotar la linea de la pata en el diagrama de vista superior
+            line = self._leg_lines.get(name)
+            if line is not None:
+                hx, hy, base = self._leg_geom[name]
+                a = math.radians(base + deg)
+                self._legs_canvas.coords(
+                    line, hx, hy,
+                    hx + self._leg_len * math.cos(a),
+                    hy + self._leg_len * math.sin(a))
+                enabled = self.ros_node.legs_enabled.get(name, True)
+                self._legs_canvas.itemconfig(
+                    line, fill=self._leg_color[name] if enabled else COLORS['muted'])
 
     def _check_rviz_status(self):
         if self._rviz_proc is not None and self._rviz_proc.poll() is not None:
@@ -1159,15 +1223,34 @@ def main(args=None):
     root = tk.Tk()
     ModernDashboardApp(root, ros_node)
 
+    def request_close(_signum=None, _frame=None):
+        try:
+            root.after(0, root.quit)
+        except tk.TclError:
+            pass
+
+    signal.signal(signal.SIGINT, request_close)
+    signal.signal(signal.SIGTERM, request_close)
+
     def spin_ros():
-        for _ in range(8):
-            rclpy.spin_once(ros_node, timeout_sec=0.0)
-        root.after(10, spin_ros)
+        if not rclpy.ok():
+            request_close()
+            return
+        try:
+            for _ in range(8):
+                rclpy.spin_once(ros_node, timeout_sec=0.0)
+            root.after(10, spin_ros)
+        except (KeyboardInterrupt, tk.TclError):
+            request_close()
 
     root.after(20, spin_ros)
 
     try:
         root.mainloop()
     finally:
-        ros_node.destroy_node()
-        rclpy.shutdown()
+        try:
+            ros_node.destroy_node()
+        except KeyboardInterrupt:
+            pass
+        if rclpy.ok():
+            rclpy.shutdown()
