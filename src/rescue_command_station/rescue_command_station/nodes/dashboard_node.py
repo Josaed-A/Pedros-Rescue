@@ -13,7 +13,7 @@ import rclpy
 from rclpy.node import Node
 from rclpy.qos import QoSHistoryPolicy, QoSProfile, QoSReliabilityPolicy
 from sensor_msgs.msg import CompressedImage, Joy, JointState, PointCloud2
-from std_msgs.msg import Float32, String
+from std_msgs.msg import Bool, Float32, String
 from std_srvs.srv import Trigger
 
 from rescue_command_station.control import config as cfg
@@ -67,6 +67,11 @@ LEG_NAMES  = LEG_FRONT + LEG_REAR
 LEG_LABELS = {
     'PataDelIzq': 'Del · Izq', 'PataDelDer': 'Del · Der',
     'PataTrasIzq': 'Tras · Izq', 'PataTrasDer': 'Tras · Der',
+}
+# Simbolo del boton cara del mando segun su indice (X, O, cuadrado, triangulo).
+_BTN_SYMBOL = {
+    cfg.BUTTON_CROSS: '✕', cfg.BUTTON_CIRCLE: '○',
+    cfg.BUTTON_SQUARE: '□', cfg.BUTTON_TRIANGLE: '△',
 }
 
 
@@ -145,9 +150,60 @@ class DashboardRosNode(Node):
         self.create_subscription(Joy, '/joy', self.joy_legs_callback, 10)
         self._legs_calib_client  = self.create_client(Trigger, '/legs/calibrate')
         self._legs_torque_client = self.create_client(Trigger, '/legs/enable_torque')
-        self._ax_connect_client  = self.create_client(Trigger, '/ax12a/connect')
+        # Conexion/desconexion de los buses de servos (AX-12A brazo+patas y EX-106)
+        self._connect_clients    = [self.create_client(Trigger, '/ax12a/connect'),
+                                    self.create_client(Trigger, '/ex106/connect')]
+        self._disconnect_clients = [self.create_client(Trigger, '/ax12a/disconnect'),
+                                    self.create_client(Trigger, '/ex106/disconnect')]
+        self._ax_connect_client  = self._connect_clients[0]   # compat
+
+        # ── Estado de botones del mando (deteccion de flanco) ──────────
+        self._prev_buttons = []
+        self._dpad_prev = False
+        self.switch_gui_requested = False   # la GUI lo lee para alternar interfaz
+        self.legs_enabled_dirty   = True    # fuerza al GUI a sincronizar checkboxes
+        # True solo cuando el dashboard esta al frente: con el brazo abierto el
+        # mando controla el brazo (no las patas). La cruz funciona en ambos.
+        self.legs_control_active  = True
+
+        # Publica si el brazo esta al frente. El teleop del vehiculo lo respeta
+        # (manda cero), para NO poder manejar el vehiculo estando en el brazo.
+        self._arm_active_pub = self.create_publisher(Bool, '/arm_active', 10)
+        self.create_timer(0.2, self._publish_arm_active)
+
+        # ── Auto-conexion de los buses al arrancar (sin boton "conectar") ──
+        self._autoconnected = False
+        self.create_timer(1.0, self._auto_connect_once)
 
         self.get_logger().info('Dashboard iniciado — vision, mapeo y control')
+
+    def _publish_arm_active(self):
+        m = Bool()
+        m.data = not self.legs_control_active   # brazo al frente == patas off
+        self._arm_active_pub.publish(m)
+
+    def _auto_connect_once(self):
+        """Conecta los buses de servos automaticamente cuando los servicios
+        esten listos (una sola vez)."""
+        if self._autoconnected:
+            return
+        ready = [c for c in self._connect_clients if c.service_is_ready()]
+        if not ready:
+            return
+        for c in ready:
+            c.call_async(Trigger.Request())
+        self._autoconnected = True
+        self.get_logger().info('Auto-conexion de servos enviada.')
+
+    def connect_all(self):
+        for c in self._connect_clients:
+            if c.service_is_ready():
+                c.call_async(Trigger.Request())
+
+    def disconnect_all(self):
+        for c in self._disconnect_clients:
+            if c.service_is_ready():
+                c.call_async(Trigger.Request())
 
     # ── Helpers ──────────────────────────────────────────────────
     def now_seconds(self):
@@ -237,7 +293,26 @@ class DashboardRosNode(Node):
     def joy_legs_callback(self, msg):
         """Stick derecho → giro de pares de patas. Eje X = delanteras,
         eje Y = traseras; el signo decide la direccion. Las patas
-        deshabilitadas no se mueven (para controlar solo una)."""
+        deshabilitadas no se mueven (para controlar solo una).
+        Botones cara → habilitan/deshabilitan cada pata.
+
+        La CRUZ (cambio de GUI) funciona SIEMPRE. El resto del control de
+        patas (sticks y botones cara) solo cuando el dashboard esta al frente:
+        si la GUI del brazo esta activa, el mando controla el brazo, no las
+        patas (legs_control_active=False)."""
+        # 1) Cruz -> alternar interfaz (siempre, en cualquier GUI)
+        self._handle_dpad(msg)
+
+        # 2) Si el brazo esta al frente, el dashboard NO toca las patas.
+        if not self.legs_control_active:
+            self._prev_buttons = list(msg.buttons)   # mantener estado de flanco
+            return
+
+        # 3) Botones cara -> toggle habilitar/deshabilitar cada pata
+        self._handle_leg_buttons(msg)
+        self._prev_buttons = list(msg.buttons)
+
+        # 4) Stick derecho -> giro de pares de patas
         if len(msg.axes) <= max(cfg.AXIS_RIGHT_X, cfg.AXIS_RIGHT_Y):
             return
         rx = msg.axes[cfg.AXIS_RIGHT_X]
@@ -255,6 +330,31 @@ class DashboardRosNode(Node):
             cmd.name.append(n)
             cmd.velocity.append(float(rear_dir if self.legs_enabled[n] else 0))
         self._legs_cmd_pub.publish(cmd)
+
+    def _handle_dpad(self, msg):
+        """Cruz (D-pad, hat en ejes) → pide alternar entre dashboard y brazo.
+        Activa siempre, sin importar que GUI este al frente."""
+        ax = msg.axes
+        dpad = (len(ax) > max(cfg.DPAD_AXIS_X, cfg.DPAD_AXIS_Y) and
+                (abs(ax[cfg.DPAD_AXIS_X]) > 0.5 or abs(ax[cfg.DPAD_AXIS_Y]) > 0.5))
+        if dpad and not self._dpad_prev:
+            self.switch_gui_requested = True
+        self._dpad_prev = dpad
+
+    def _handle_leg_buttons(self, msg):
+        """Flanco de subida de los botones cara → toggle de cada pata."""
+        btn = msg.buttons
+
+        def pressed(idx):
+            return (idx < len(btn) and btn[idx] and
+                    (idx >= len(self._prev_buttons) or not self._prev_buttons[idx]))
+
+        for leg, b in cfg.LEG_BUTTONS.items():
+            if leg in self.legs_enabled and pressed(b):
+                self.legs_enabled[leg] = not self.legs_enabled[leg]
+                self.legs_enabled_dirty = True
+                self.get_logger().info(
+                    f'{leg}: {"habilitada" if self.legs_enabled[leg] else "deshabilitada"} (boton)')
 
 
 # ─── Dashboard App ───────────────────────────────────────────────────────────
@@ -495,7 +595,8 @@ class ModernDashboardApp:
         # Vista de costado = el plano en que giran las patas (referencia clara
         # de donde esta cada una, como manecilla de reloj). FRENTE a la derecha.
         # 0° = delanteras hacia ADELANTE (derecha), traseras hacia ATRAS (izq).
-        # Color por lado: Izq = cyan, Der = azul; gris si esta deshabilitada.
+        # Color por lado: Izq = cyan, Der = ambar (contraste para ver cuando
+        # estan en angulos distintos); gris si la pata esta deshabilitada.
         self._legs_canvas = tk.Canvas(panel, width=290, height=120,
                                       bg=COLORS['surface'], highlightthickness=0)
         self._legs_canvas.pack(pady=(4, 6))
@@ -519,8 +620,8 @@ class ModernDashboardApp:
             'PataTrasDer': (bx0 + 12, cy, 180.0),
         }
         self._leg_color = {
-            'PataDelIzq':  COLORS['cyan'], 'PataDelDer':  COLORS['blue'],
-            'PataTrasIzq': COLORS['cyan'], 'PataTrasDer': COLORS['blue'],
+            'PataDelIzq':  COLORS['cyan'], 'PataDelDer':  COLORS['amber'],
+            'PataTrasIzq': COLORS['cyan'], 'PataTrasDer': COLORS['amber'],
         }
         self._leg_lines = {}
         for name, (hx, hy, base) in self._leg_geom.items():
@@ -537,7 +638,7 @@ class ModernDashboardApp:
         self._legs_canvas.create_text(bx0 + 16, by1 + 16, text='Izq',
                                       fill=COLORS['muted'], font=(FONT, 7), anchor='w')
         self._legs_canvas.create_line(bx0 + 48, by1 + 16, bx0 + 60, by1 + 16,
-                                      fill=COLORS['blue'], width=3)
+                                      fill=COLORS['amber'], width=3)
         self._legs_canvas.create_text(bx0 + 64, by1 + 16, text='Der',
                                       fill=COLORS['muted'], font=(FONT, 7), anchor='w')
 
@@ -556,6 +657,9 @@ class ModernDashboardApp:
             tk.Label(row, text=LEG_LABELS[name], bg=COLORS['surface'],
                      fg=COLORS['text'], width=10, anchor='w',
                      font=(FONT, 9)).pack(side='left')
+            tk.Label(row, text=_BTN_SYMBOL.get(cfg.LEG_BUTTONS.get(name), '?'),
+                     bg=COLORS['surface'], fg=COLORS['muted'], width=2,
+                     font=(FONT, 11, 'bold')).pack(side='left')
             lbl = tk.Label(row, text='—', bg=COLORS['surface'], fg=COLORS['cyan'],
                            width=9, anchor='e', font=(FONT, 11, 'bold'))
             lbl.pack(side='right')
@@ -564,9 +668,10 @@ class ModernDashboardApp:
         leg_btns = tk.Frame(panel, bg=COLORS['surface'])
         leg_btns.pack(fill='x', pady=(5, 0))
         for txt, cmd, fg in [
-            ('CONECTAR',   self._on_legs_connect,   COLORS['blue']),
-            ('CALIBRAR 0°', self._on_legs_calibrate, COLORS['green']),
-            ('TORQUE',     self._on_legs_torque,    COLORS['amber']),
+            ('RECONECTAR', self._on_legs_reconnect,  COLORS['blue']),
+            ('DESCONECT.', self._on_legs_disconnect, COLORS['red']),
+            ('CALIB 0°',   self._on_legs_calibrate,  COLORS['green']),
+            ('TORQUE',     self._on_legs_torque,     COLORS['amber']),
         ]:
             tk.Button(leg_btns, text=txt, bg=COLORS['surface_high'], fg=fg,
                       font=(FONT, 9, 'bold'), relief='flat', bd=0, pady=7,
@@ -817,9 +922,15 @@ else:
 
         Solo una GUI visible a la vez. arm_station corre en este mismo
         contenedor (ya sourcado). Al cerrar la GUI del brazo, su grupo de
-        proceso termina y el dashboard reaparece (ver _wait_arm)."""
+        proceso termina y el dashboard reaparece (ver _wait_arm).
+        Es un TOGGLE: si el brazo ya esta abierto, lo cierra (vuelve aqui)."""
         if self._arm_proc is not None and self._arm_proc.poll() is None:
-            return  # ya esta corriendo
+            # Ya esta abierto -> cerrarlo (su grupo termina -> reaparece el dashboard)
+            try:
+                os.killpg(os.getpgid(self._arm_proc.pid), signal.SIGINT)
+            except Exception:
+                pass
+            return
         try:
             self._arm_proc = subprocess.Popen(
                 ['ros2', 'launch', 'rescue_command_station', 'arm_station.launch.py'],
@@ -829,6 +940,9 @@ else:
                 'Control del Brazo',
                 f'No se pudo lanzar la GUI del brazo:\n{e}')
             return
+        # El brazo pasa al frente: el mando deja de controlar las patas
+        # (solo la cruz sigue activa para volver).
+        self.ros_node.legs_control_active = False
         self.root.withdraw()
         threading.Thread(target=self._wait_arm, daemon=True).start()
 
@@ -837,6 +951,8 @@ else:
             self._arm_proc.wait()
         except Exception:
             pass
+        # El dashboard vuelve al frente: el mando retoma el control de patas.
+        self.ros_node.legs_control_active = True
         # Reaparecer el dashboard en el hilo de Tk (Tk no es thread-safe)
         self.root.after(0, self.root.deiconify)
 
@@ -855,8 +971,15 @@ else:
             self._pending_futures.append((future, cb))
         self._legs_status_label.configure(text=f'{accion}...', fg=COLORS['muted'])
 
-    def _on_legs_connect(self):
-        self._legs_call(self.ros_node._ax_connect_client, 'Conectar bus')
+    def _on_legs_reconnect(self):
+        self.ros_node.connect_all()
+        self._legs_status_label.configure(text='Reconectando buses de servos...',
+                                          fg=COLORS['muted'])
+
+    def _on_legs_disconnect(self):
+        self.ros_node.disconnect_all()
+        self._legs_status_label.configure(text='Buses de servos DESCONECTADOS.',
+                                          fg=COLORS['amber'])
 
     def _on_legs_calibrate(self):
         self._legs_call(self.ros_node._legs_calib_client, 'Calibrar patas')
@@ -865,6 +988,15 @@ else:
         self._legs_call(self.ros_node._legs_torque_client, 'Rehabilitar torque')
 
     def _refresh_legs(self):
+        # Sincronizar checkboxes con el estado (el mando tambien los cambia)
+        if getattr(self.ros_node, 'legs_enabled_dirty', False):
+            for name, var in self._leg_vars.items():
+                var.set(bool(self.ros_node.legs_enabled.get(name, True)))
+            self.ros_node.legs_enabled_dirty = False
+        # Cambio de interfaz pedido por la cruz del mando
+        if getattr(self.ros_node, 'switch_gui_requested', False):
+            self.ros_node.switch_gui_requested = False
+            self._on_toggle_arm()
         for name, lbl in self._leg_val_labels.items():
             deg = self.ros_node.legs_pos_deg.get(name, 0.0)
             lbl.configure(text=f'{deg:+.1f}°')

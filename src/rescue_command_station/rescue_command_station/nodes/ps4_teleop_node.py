@@ -4,7 +4,7 @@ import rclpy
 from geometry_msgs.msg import Twist
 from rclpy.node import Node
 from sensor_msgs.msg import Joy
-from std_msgs.msg import Float32, String
+from std_msgs.msg import Bool, Float32, String
 
 from rescue_command_station.control.gearbox import Gearbox
 from rescue_command_station.control.tank_drive import TankDriveMixer
@@ -26,6 +26,8 @@ class PS4TeleopNode(Node):
         self.joy_timeout_seconds = float(self.get_parameter('joy_timeout_seconds').value)
 
         self.real_speed_abs = 0.0
+        # Cuando la GUI del brazo esta al frente, el vehiculo NO se maneja.
+        self.arm_active = False
         self.last_controller_state = None
         self.last_joy_time = None
         self.last_cmd = Twist()
@@ -39,6 +41,7 @@ class PS4TeleopNode(Node):
 
         self.create_subscription(Joy, '/joy', self.joy_callback, 10)
         self.create_subscription(Float32, '/real_speed_abs', self.real_speed_callback, 10)
+        self.create_subscription(Bool, '/arm_active', self.arm_active_callback, 10)
 
         self.cmd_vel_publisher = self.create_publisher(Twist, '/cmd_vel', 10)
         self.drive_status_publisher = self.create_publisher(String, '/drive_status', 10)
@@ -54,6 +57,9 @@ class PS4TeleopNode(Node):
 
     def real_speed_callback(self, msg):
         self.real_speed_abs = msg.data
+
+    def arm_active_callback(self, msg):
+        self.arm_active = bool(msg.data)
 
     def now_seconds(self):
         return self.get_clock().now().nanoseconds / 1e9
@@ -74,7 +80,9 @@ class PS4TeleopNode(Node):
         self.last_status_text = status_text
 
     def publish_cmd_heartbeat(self):
-        if not self.has_fresh_joy():
+        if self.arm_active:
+            self.set_zero_command('BRAZO ACTIVO')
+        elif not self.has_fresh_joy():
             self.set_zero_command()
 
         self.cmd_vel_publisher.publish(self.last_cmd)
@@ -146,6 +154,13 @@ class PS4TeleopNode(Node):
         controller_state = self.controller_mapper.from_joy_msg(msg)
         self.last_controller_state = controller_state
         self.last_joy_time = self.now_seconds()
+
+        # Con el brazo al frente el vehiculo no se maneja: manda cero.
+        if self.arm_active:
+            self.set_zero_command('BRAZO ACTIVO')
+            self.cmd_vel_publisher.publish(self.last_cmd)
+            self.publish_periodic_status()
+            return
 
         self.gearbox.update_from_controller(controller_state)
 

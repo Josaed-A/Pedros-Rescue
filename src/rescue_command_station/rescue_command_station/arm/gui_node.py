@@ -375,8 +375,8 @@ class GUINode(Node):
         ex_names = [n for n in self._joint_order
                     if self._joint_servo.get(n, ('ax',))[0] == 'ex']
 
-        for names, pub in ((ax_names, self._pub_ax_cmd),
-                           (ex_names, self._pub_ex_cmd)):
+        for driver, names, pub in (('ax', ax_names, self._pub_ax_cmd),
+                                   ('ex', ex_names, self._pub_ex_cmd)):
             if not names:
                 continue
             idx = [self._joint_order.index(n) for n in names]
@@ -386,6 +386,35 @@ class GUINode(Node):
             msg.position = [float(q_rad[i]) for i in idx]
             msg.velocity = [float(vel_pct)] * len(names)
             pub.publish(msg)
+            if driver == 'ex':
+                self._jog_ex_fallback(names, idx, q_rad, vel_pct)
+
+    def _jog_ex_fallback(self, names: list[str], idx: list[int],
+                         q_rad: np.ndarray, vel_pct: float):
+        """Respaldo para EX-106+: usa el servicio por ID si esta disponible."""
+        cli = self._cli.get('ex_jog')
+        if cli is None or not cli.service_is_ready():
+            return
+
+        for name, i in zip(names, idx):
+            driver, sid = self._joint_servo.get(name, ('', 0))
+            if driver != 'ex' or sid <= 0:
+                continue
+            req = ServoCommand.Request()
+            req.id = int(sid)
+            req.target_deg = float(np.degrees(q_rad[i]))
+            req.vel_pct = float(vel_pct)
+
+            def _done(f, joint=name):
+                res = _future_result(f)
+                if res is None:
+                    self.get_logger().warn(
+                        f'Fallback EX jog para {joint}: llamada fallida')
+                elif not res.success:
+                    self.get_logger().warn(
+                        f'Fallback EX jog para {joint}: {res.mensaje}')
+
+            cli.call_async(req).add_done_callback(_done)
 
     def publicar_preview(self, q_rad):
         """Publica q_rad para que cinematica_node calcule el preview."""

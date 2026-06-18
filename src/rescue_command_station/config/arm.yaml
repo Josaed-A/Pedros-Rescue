@@ -17,8 +17,8 @@ cinematica:
       - "Munieca_P"
       - "Munieca_Y"
       - "Munieca_R"
-    # Joints que se dibujan con el giro invertido en la simulacion (el modelo
-    # gira al reves que el servo real). Solo afecta la visualizacion/pose.
+    # Joints cuyo giro fisico va al reves del modelo cinematico. fk_sign los
+    # invierte en FK, en la semilla de IK y en el comando devuelto.
     sim_invert_joints:
       - "Munieca_P"
 

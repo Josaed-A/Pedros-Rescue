@@ -47,7 +47,12 @@ from rescue_command_station.arm.cartesian_controller import (
     clamp_joints,
     JOINT_LIMITS,
 )
-from rescue_interfaces.srv import CartesianGoto, ComputeIKPose, CartesianTrajectory
+from rescue_interfaces.srv import (
+    CartesianGoto,
+    ComputeIKPose,
+    CartesianTrajectory,
+    ServoCommand,
+)
 from rescue_interfaces.msg import CartesianState, CartesianWaypoint
 
 
@@ -139,6 +144,7 @@ class CartesianNode(Node):
 
         # ── Cliente IK ──────────────────────────────────────────────────
         self._cli_ik = self.create_client(ComputeIKPose, '/compute_ik_pose')
+        self._cli_ex_jog = self.create_client(ServoCommand, '/ex106/jog')
 
         # ── Servicios ───────────────────────────────────────────────────
         self.create_service(CartesianGoto,       '/cartesian/goto',       self._srv_goto)
@@ -427,8 +433,8 @@ class CartesianNode(Node):
                     if self._joint_servo.get(n, ('ax',))[0] == 'ax']
         ex_names = [n for n in self._joint_order
                     if self._joint_servo.get(n, ('ex',))[0] == 'ex']
-        for names, pub in ((ax_names, self._pub_ax),
-                           (ex_names, self._pub_ex)):
+        for driver, names, pub in (('ax', ax_names, self._pub_ax),
+                                   ('ex', ex_names, self._pub_ex)):
             if not names:
                 continue
             idx = [self._joint_order.index(n) for n in names]
@@ -438,6 +444,36 @@ class CartesianNode(Node):
             msg.position     = [float(q_rad[i]) for i in idx]
             msg.velocity     = [float(np.clip(vel_pct, 1.0, 100.0))] * len(names)
             pub.publish(msg)
+            if driver == 'ex':
+                self._jog_ex_fallback(names, idx, q_rad, vel_pct)
+
+    def _jog_ex_fallback(self, names: list[str], idx: list[int],
+                         q_rad: np.ndarray, vel_pct: float):
+        """Respaldo para EX-106+: usa el servicio por ID si esta disponible."""
+        if not self._cli_ex_jog.service_is_ready():
+            return
+
+        for name, i in zip(names, idx):
+            driver, sid = self._joint_servo.get(name, ('', 0))
+            if driver != 'ex' or sid <= 0:
+                continue
+            req = ServoCommand.Request()
+            req.id = int(sid)
+            req.target_deg = float(np.degrees(q_rad[i]))
+            req.vel_pct = float(np.clip(vel_pct, 1.0, 100.0))
+
+            def _cb(fut, joint=name):
+                try:
+                    res = fut.result()
+                except Exception:
+                    self.get_logger().warn(
+                        f'Fallback EX jog para {joint}: llamada fallida')
+                    return
+                if not res.success:
+                    self.get_logger().warn(
+                        f'Fallback EX jog para {joint}: {res.mensaje}')
+
+            self._cli_ex_jog.call_async(req).add_done_callback(_cb)
 
     # ------------------------------------------------------------------
     #  Feedback: /cartesian/state  (10 Hz via timer)
