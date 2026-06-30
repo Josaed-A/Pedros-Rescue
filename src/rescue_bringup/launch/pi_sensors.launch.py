@@ -11,13 +11,15 @@ Lanza:
                            /camera/color/image_raw
   4. logitech_pub        → /robot/camera/front/image_raw/compressed
   5. object_detector     → /object_detections  /camera/color/image_annotated/compressed
-  6. servos (brazo)      → /ax12a/*, /ex106/*, /joint_states  (opcional)
+
+Los servos del brazo (AX-12A + EX-106+) NO se lanzan aquí: los maneja
+servos.launch.py (incluido por pedro_pi.launch.py) para evitar abrir dos
+veces el mismo puerto serial.
 
 Uso:
   ros2 launch rescue_bringup pi_sensors.launch.py
   ros2 launch rescue_bringup pi_sensors.launch.py launch_logitech:=false
   ros2 launch rescue_bringup pi_sensors.launch.py launch_camera:=false
-  ros2 launch rescue_bringup pi_sensors.launch.py launch_servos:=false
 """
 
 import os
@@ -39,7 +41,6 @@ def generate_launch_description():
     launch_camera   = LaunchConfiguration('launch_camera',   default='true')
     launch_lidar    = LaunchConfiguration('launch_lidar',    default='true')
     launch_logitech = LaunchConfiguration('launch_logitech', default='true')
-    launch_servos   = LaunchConfiguration('launch_servos',   default='true')
     hazmat_model    = LaunchConfiguration('hazmat_model',    default='')
 
     pkg_bringup = get_package_share_directory('rescue_bringup')
@@ -108,31 +109,8 @@ def generate_launch_description():
         ],
     )
 
-    # ── 5. Servos del brazo 6-DOF (AX-12A + EX-106+) ─────────────
-    from ament_index_python.packages import get_package_share_directory as _gpsd
-    _servos_cfg = os.path.join(_gpsd('rescue_robot_core'), 'config', 'servos.yaml')
-    _js_remap = [
-        ('/joint_states',         '/arm/joint_states'),
-        ('/joint_states_preview', '/arm/joint_states_preview'),
-    ]
-    from launch_ros.actions import Node as _Node
-    servos_launch = TimerAction(
-        period=2.0,
-        actions=[
-            _Node(
-                package='rescue_robot_core', executable='dynamixel_bus_node',
-                name='ax12a_driver', parameters=[_servos_cfg],
-                remappings=_js_remap, output='screen',
-                condition=IfCondition(launch_servos),
-            ),
-            _Node(
-                package='rescue_robot_core', executable='ex106_driver_node',
-                name='ex106_driver', parameters=[_servos_cfg],
-                remappings=_js_remap, output='screen',
-                condition=IfCondition(launch_servos),
-            ),
-        ],
-    )
+    # Los servos del brazo (AX-12A + EX-106+) los lanza servos.launch.py
+    # desde pedro_pi.launch.py — aquí NO, para no abrir dos veces el puerto.
 
     return LaunchDescription([
         DeclareLaunchArgument(
@@ -151,11 +129,6 @@ def generate_launch_description():
             description='Lanzar cámara Logitech frontal + object_detector',
         ),
         DeclareLaunchArgument(
-            'launch_servos',
-            default_value='true',
-            description='Lanzar drivers de servos del brazo 6-DOF (AX-12A + EX-106+)',
-        ),
-        DeclareLaunchArgument(
             'hazmat_model',
             default_value='',
             description='Ruta al modelo YOLO hazmat (.pt). Vacío = HSV fallback',
@@ -165,5 +138,4 @@ def generate_launch_description():
         camera_launch,
         astra_republish,
         logitech_launch,
-        servos_launch,
     ])

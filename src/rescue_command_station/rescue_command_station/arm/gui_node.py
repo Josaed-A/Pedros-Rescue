@@ -979,10 +979,13 @@ class App(ctk.CTk):
                 frame = None if n._cam_frame is None else n._cam_frame.copy()
                 self._drawn_cam_version = n._cam_version
             if frame is not None:
+                # Dejamos un margen de 4 px para que la imagen quepa SIEMPRE
+                # dentro del label sin tocar su borde (con grid_propagate(False)
+                # en 'cam' esto evita cualquier recalculo de layout).
                 w = self.cam_label.winfo_width()
                 h = self.cam_label.winfo_height()
-                png = bgr_frame_to_png_data(frame, max_width=w if w > 10 else 520,
-                                            max_height=h if h > 10 else 280)
+                png = bgr_frame_to_png_data(frame, max_width=w - 4 if w > 10 else 520,
+                                            max_height=h - 4 if h > 10 else 280)
                 if png is not None:
                     self.cam_photo = tk.PhotoImage(data=png, format='png')
                     self.cam_label.configure(image=self.cam_photo, text='')
@@ -1706,6 +1709,12 @@ class App(ctk.CTk):
         cam.grid(row=1, column=0, sticky='nsew', padx=4, pady=(0, 4))
         cam.grid_columnconfigure(0, weight=1)
         cam.grid_rowconfigure(1, weight=1)
+        # El tamano de la imagen depende del area del label, y el label vive
+        # dentro de 'cam'. Si 'cam' propaga el tamano de sus hijos hacia arriba,
+        # la imagen agranda el label -> agranda 'cam' -> se vuelve a medir mas
+        # grande -> bucle de redimensionado. Fijamos el tamano de 'cam' segun el
+        # grid del panel derecho (no segun su contenido) para romper el ciclo.
+        cam.grid_propagate(False)
         ctk.CTkLabel(cam, text='Camara frontal', anchor='w',
                      text_color=COL['muted'], font=('Roboto', 12, 'bold')
                      ).grid(row=0, column=0, sticky='ew', padx=8, pady=(6, 2))
