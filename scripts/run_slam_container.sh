@@ -18,7 +18,6 @@ IMAGE="pedros-rescue-ros2:jazzy"
 # Nombre de contenedor según modo para poder correr SLAM + dashboard en paralelo
 case "${1:-shell}" in
     dashboard) CONTAINER="pedros_dashboard" ;;
-    brazo-sim) CONTAINER="pedros_brazo_sim" ;;
     *) CONTAINER="pedros_slam" ;;
 esac
 
@@ -181,13 +180,22 @@ case "${1:-shell}" in
              ros2 launch rescue_command_station command_station.launch.py"
         ;;
 
-    brazo-sim)
-        # Brazo 6-DOF en SIMULACION — todo en el PC, sin la Raspberry.
-        # Drivers simulados + cinematica + cartesiano + GUI (vista 3D + pinza).
+    arm)
+        # GUI del brazo 6-DOF — instala deps, compila y lanza arm_station
+        ARM_SIM="${2:-false}"
         CMD="source /opt/ros/jazzy/setup.bash && \
+             cd /workspace && \
+             echo '━━━ Instalando dependencias GUI brazo ━━━' && \
+             rm -rf /usr/lib/python3/dist-packages/mpl_toolkits 2>/dev/null || true && \
+             pip3 install customtkinter matplotlib --break-system-packages --no-cache-dir -q && \
+             echo '━━━ Compilando rescue_interfaces ━━━' && \
+             colcon build --packages-select rescue_interfaces 2>&1 | tail -3 && \
              source /workspace/install/setup.bash && \
-             echo '━━━ Brazo 6-DOF (SIMULACION, solo PC) ━━━' && \
-             ros2 launch rescue_command_station arm_station.launch.py sim:=true"
+             echo '━━━ Compilando rescue_command_station ━━━' && \
+             colcon build --packages-select rescue_command_station 2>&1 | tail -3 && \
+             source /workspace/install/setup.bash && \
+             echo '━━━ Lanzando GUI Brazo 6-DOF (sim:=${ARM_SIM}) ━━━' && \
+             ros2 launch rescue_command_station arm_station.launch.py sim:=${ARM_SIM}"
         ;;
 
     slam-pi)
@@ -265,31 +273,28 @@ case "${1:-shell}" in
 
     # ── Modos que se ejecutan en la Pi via SSH ─────────────────────
     pi|pi-sensors|pi-lidar|pi-camera|pi-stop|pi-logs|pi-build)
-        PI_HOST="${PI_HOST:-gardian@10.42.0.240}"
-        # Sin credencial en el script: por defecto usa LLAVE SSH (recomendado).
-        # Para usar contraseña: export PI_PASS="..." antes de correr el script.
-        PI_PASS="${PI_PASS:-}"
-        if [ -n "$PI_PASS" ]; then SSH_WRAP=(sshpass -p "$PI_PASS"); else SSH_WRAP=(); fi
+        PI_HOST="sraus@10.42.0.240"
+        PI_PASS="123456"
         PI_MODE="${1#pi}"          # "" | "-sensors" | "-lidar" | "-camera" | "-stop" | "-logs" | "-build"
         PI_ARG="${PI_MODE#-}"      # "" | "sensors" | "lidar" | "camera" | "stop" | "logs" | "build"
         [ -z "$PI_ARG" ] && PI_ARG="sensors"
 
         echo "━━━ Sincronizando scripts + launch a Pi... ━━━"
-        "${SSH_WRAP[@]}" scp \
+        sshpass -p "$PI_PASS" scp \
             "$WORKSPACE/scripts/run_pi_sensors.sh" \
             "${PI_HOST}:~/pedros/scripts/run_pi_sensors.sh" 2>/dev/null || true
-        "${SSH_WRAP[@]}" scp \
+        sshpass -p "$PI_PASS" scp \
             "$WORKSPACE/scripts/install_pi_autostart.sh" \
             "${PI_HOST}:~/pedros/scripts/install_pi_autostart.sh" 2>/dev/null || true
-        "${SSH_WRAP[@]}" scp \
+        sshpass -p "$PI_PASS" scp \
             "$WORKSPACE/src/rescue_bringup/launch/pi_sensors.launch.py" \
             "${PI_HOST}:~/pedros/src/rescue_bringup/launch/pi_sensors.launch.py" 2>/dev/null || true
-        "${SSH_WRAP[@]}" scp \
+        sshpass -p "$PI_PASS" scp \
             "$WORKSPACE/src/rescue_bringup/launch/logitech_vision.launch.py" \
             "${PI_HOST}:~/pedros/src/rescue_bringup/launch/logitech_vision.launch.py" 2>/dev/null || true
 
         echo "━━━ Lanzando sensores en Pi (modo: ${PI_ARG}) ━━━"
-        "${SSH_WRAP[@]}" ssh -o StrictHostKeyChecking=no "$PI_HOST" \
+        sshpass -p "$PI_PASS" ssh -o StrictHostKeyChecking=no "$PI_HOST" \
             "chmod +x ~/pedros/scripts/run_pi_sensors.sh && \
              ~/pedros/scripts/run_pi_sensors.sh ${PI_ARG}"
         exit 0
@@ -341,7 +346,6 @@ podman run -it --rm --replace \
     "${DISPLAY_ARGS[@]}" \
     "${PODMAN_SOCK_ARGS[@]}" \
     --env "ROS_DOMAIN_ID=0" \
-    --env "RMW_IMPLEMENTATION=rmw_cyclonedds_cpp" \
     --env "RCUTILS_COLORIZED_OUTPUT=1" \
     --env "CYCLONEDDS_URI=${CYCLONE_XML}" \
     -v "$WORKSPACE:/workspace:z" \

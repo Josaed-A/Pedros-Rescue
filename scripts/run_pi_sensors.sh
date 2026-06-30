@@ -7,7 +7,6 @@
 #   ./scripts/run_pi_sensors.sh           → sensores completos (lidar + cámara)
 #   ./scripts/run_pi_sensors.sh lidar     → solo lidar LD19
 #   ./scripts/run_pi_sensors.sh camera    → solo cámara Orbbec
-#   ./scripts/run_pi_sensors.sh servos    → bus de servos (brazo + patas Dynamixel)
 #   ./scripts/run_pi_sensors.sh stop      → detener contenedor
 #   ./scripts/run_pi_sensors.sh logs      → ver logs en vivo
 #   ./scripts/run_pi_sensors.sh build     → compilar workspace en contenedor
@@ -72,12 +71,12 @@ DEVICE_ARGS=()
 for _vid in /dev/video*; do
     [ -e "$_vid" ] && DEVICE_ARGS+=(--device="$_vid")
 done
-# Brazo: Dynamixel AX-12A / EX-106+ via adaptadores USB-serial
-for _usb in /dev/ttyUSB0 /dev/ttyUSB1; do
-    [ -e "$_usb" ] && DEVICE_ARGS+=(--device="$_usb")
+# Servos Dynamixel: U2D2 (AX-12A brazo+patas) y RS485 (EX-106+ hombro)
+for _tty in /dev/ttyUSB0 /dev/ttyUSB1 /dev/ttyUSB2; do
+    [ -e "$_tty" ] && DEVICE_ARGS+=(--device="$_tty")
 done
-# Symlinks estables by-id (servos.yaml usa /dev/serial/by-id/...)
-[ -d /dev/serial ] && DEVICE_ARGS+=(-v /dev/serial:/dev/serial:ro)
+# Ruta estable by-id para el U2D2
+[ -d /dev/serial ] && DEVICE_ARGS+=(-v /dev/serial:/dev/serial:rw)
 
 # ── CycloneDDS: interfaz eth0 de la Pi, peer = PC ─────────────────
 CYCLONE_XML="<CycloneDDS><Domain>\
@@ -98,27 +97,19 @@ case "${1:-sensors}" in
     camera)
         LAUNCH_ARGS="launch_lidar:=false"
         ;;
-    servos|arm)
-        LAUNCH_ARGS="__SERVOS__"
-        ;;
     *)
         LAUNCH_ARGS=""
         ;;
 esac
 
-if [ "${LAUNCH_ARGS}" = "__SERVOS__" ]; then
-    # Bus de servos (brazo AX-12A + patas + EX-106+) — cinematica/GUI en el PC
-    CMD="source /opt/ros/jazzy/setup.bash && \
-         source /workspace/install/setup.bash && \
-         echo '━━━ Servos Pi: bus Dynamixel AX-12A (brazo+patas) + EX-106+ ━━━' && \
-         ros2 launch rescue_robot_core servos.launch.py"
-else
-    CMD="chmod a+rw /dev/video* 2>/dev/null || true && \
-         source /opt/ros/jazzy/setup.bash && \
-         source /workspace/install/setup.bash && \
-         echo '━━━ Sensores Pi: LD19 + Orbbec Astra Pro ━━━' && \
-         ros2 launch rescue_bringup pi_sensors.launch.py ${LAUNCH_ARGS}"
-fi
+CMD="chmod a+rw /dev/video* 2>/dev/null || true && \
+     pip3 install --break-system-packages -q \
+       /workspace/pyserial-3.5-py2.py3-none-any.whl \
+       /workspace/dynamixel_sdk-4.0.5-py3-none-any.whl 2>/dev/null || true && \
+     source /opt/ros/jazzy/setup.bash && \
+     source /workspace/install/setup.bash && \
+     echo '━━━ Sensores Pi: LD19 + Orbbec Astra Pro + Servos Brazo ━━━' && \
+     ros2 launch rescue_bringup pi_sensors.launch.py ${LAUNCH_ARGS}"
 
 echo "━━━ Dispositivos: ${DEVICE_ARGS[*]} ━━━"
 
