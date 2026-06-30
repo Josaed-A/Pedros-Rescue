@@ -5,11 +5,11 @@
 
 cinematica:
   ros__parameters:
-    base_height:  0.14
-    L1:           0.22
-    L2:           0.20
-    L3:           0.12
-    tool_length:  0.10
+    base_height:  0.12
+    L1:           0.36
+    L2:           0.36
+    L3:           0.0
+    tool_length:  0.0
     joint_order:
       - "Base"
       - "Hombro"
@@ -24,11 +24,11 @@ cinematica:
 simulacion:
   ros__parameters:
     # Alcance maximo del brazo (m) para escalar los ejes.
-    reach: 0.74
+    reach: 0.72
 
 gui_control:
   ros__parameters:
-    reach: 0.74
+    reach: 0.72
     joint_order:
       - "Base"
       - "Hombro"

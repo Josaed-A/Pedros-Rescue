@@ -48,11 +48,11 @@ class CinematicaNode(Node):
         super().__init__('cinematica')
 
         # Parametros geometricos desde YAML
-        self.declare_parameter('base_height',  0.14)
-        self.declare_parameter('L1',           0.22)
-        self.declare_parameter('L2',           0.20)
-        self.declare_parameter('L3',           0.12)
-        self.declare_parameter('tool_length',  0.10)
+        self.declare_parameter('base_height',  0.12)
+        self.declare_parameter('L1',           0.36)
+        self.declare_parameter('L2',           0.36)
+        self.declare_parameter('L3',           0.0)
+        self.declare_parameter('tool_length',  0.0)
         self.declare_parameter('joint_order',
             ['Base', 'Hombro', 'Codo', 'Munieca_P', 'Munieca_Y', 'Munieca_R'])
         # Joints cuyo giro fisico va al reves del modelo. Se declara como STRING
@@ -177,8 +177,8 @@ class CinematicaNode(Node):
                    @ rotx(np.radians(req.q5_deg))   # Muñeca_Y (eje X)
                    @ rotz(np.radians(req.q6_deg)))[:3, :3]  # Muñeca_R (eje Z)
             Td  = make_T(Rd, [req.x, req.y, req.z])
-            # Semilla = configuracion actual (en convencion cinematica) para
-            # continuidad/suavidad y evitar volteos de munieca.
+            # Semilla = configuracion actual (en convencion cinematica). La IK
+            # analitica la usa para escoger la rama equivalente mas cercana.
             q   = self._arm.ik(Td, req.elbow,
                                q_init=self._q_actual * self._fk_sign)
             res.success = True
@@ -195,17 +195,16 @@ class CinematicaNode(Node):
     def _srv_ik_pose(self, req, res):
         """IK desde una pose completa Td = [R|p] (para teleoperacion cartesiana).
 
-        Usa el mismo solver geometrico self._arm.ik sin cambios. Solo arma Td
-        con la R recibida y verifica que la POSICION sea alcanzable (la
-        orientacion es best-effort: la munieca de 2 ejes puede no cubrir toda
-        SO(3) en cualquier punto).
+        Usa el mismo solver analitico self._arm.ik sin cambios. Solo arma Td
+        con la R recibida y verifica que la posicion alcanzada cierre contra
+        la pose solicitada.
         """
         try:
             R = np.array(req.r, dtype=float).reshape(3, 3)
             Td = make_T(R, [req.x, req.y, req.z])
             # Semilla = configuracion actual (en convencion cinematica). En una
-            # trayectoria cartesiana cada paso parte del anterior => movimiento
-            # continuo y suave (incl. desplazamientos en Z) sin volteos.
+            # trayectoria cartesiana cada paso parte del anterior, asi la IK
+            # analitica escoge la rama equivalente mas cercana.
             q  = self._arm.ik(Td, req.elbow or 'down',
                               q_init=self._q_actual * self._fk_sign)
 
