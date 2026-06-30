@@ -50,11 +50,6 @@ OUTPUT_DIR = '/workspace/maps'
 
 DET_TYPE_OPTIONS = ['ar_code', 'hazmat_sign', 'real_object']
 
-_RVIZ_BASH = (
-    '. /opt/ros/jazzy/setup.bash && '
-    '. /workspace/install/setup.bash && '
-    'rviz2 -d /workspace/src/rescue_bringup/config/slam_rviz.rviz'
-)
 _PODMAN_SOCK = '/tmp/podman.sock'
 
 
@@ -893,48 +888,33 @@ class ModernDashboardApp:
     # ─── RViz ─────────────────────────────────────────────────────────────
 
     def _on_launch_rviz(self):
-        display = os.environ.get('DISPLAY', ':0')
-        cmd = f'DISPLAY={display} {_RVIZ_BASH}'
-
-        if not os.path.exists(_PODMAN_SOCK):
-            self.vars['save_status'].set(
-                'RViz: socket no disponible. Relanza el dashboard con: '
-                './scripts/run_slam_container.sh dashboard')
-            self._save_status_label.configure(fg=COLORS['red'])
+        if self._rviz_proc is not None and self._rviz_proc.poll() is None:
+            self.vars['save_status'].set('RViz ya está corriendo.')
+            self._save_status_label.configure(fg=COLORS['muted'])
             return
 
-        # Use Podman REST API via Unix socket to exec rviz2 in pedros_slam
-        py = f"""
-import socket, http.client, json, sys
+        try:
+            from ament_index_python.packages import get_package_share_directory
+            rviz_config = os.path.join(
+                get_package_share_directory('rescue_bringup'), 'config', 'slam_rviz.rviz')
+        except Exception:
+            rviz_config = '/workspace/src/rescue_bringup/config/slam_rviz.rviz'
 
-class _U(http.client.HTTPConnection):
-    def connect(self):
-        self.sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-        self.sock.connect('{_PODMAN_SOCK}')
+        env = os.environ.copy()
+        env.setdefault('DISPLAY', ':0')
 
-def api(method, path, body=None):
-    c = _U('localhost')
-    h = {{'Content-Type': 'application/json'}} if body else {{}}
-    c.request(method, path, json.dumps(body) if body else None, h)
-    return json.loads(c.getresponse().read() or b'{{}}')
-
-cmd = {json.dumps(cmd)}
-r = api('POST', '/v4.0.0/libpod/containers/pedros_slam/exec',
-        {{'AttachStdin': False, 'AttachStdout': False, 'AttachStderr': False,
-          'Detach': True, 'Cmd': ['bash', '-c', cmd]}})
-exec_id = r.get('Id', '')
-if exec_id:
-    api('POST', f'/v4.0.0/libpod/exec/{{exec_id}}/start', {{'Detach': True}})
-    print('OK')
-else:
-    print('ERROR:', r, file=sys.stderr)
-    sys.exit(1)
-"""
-        self._rviz_proc = subprocess.Popen(
-            ['python3', '-c', py],
-            stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-        self.btn_rviz.configure(text='RVIZ CORRIENDO  ●',
-                                fg=COLORS['green'], bg=COLORS['green_bg'])
+        try:
+            self._rviz_proc = subprocess.Popen(
+                ['rviz2', '-d', rviz_config],
+                env=env,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.PIPE,
+            )
+            self.btn_rviz.configure(text='RVIZ CORRIENDO  ●',
+                                    fg=COLORS['green'], bg=COLORS['green_bg'])
+        except Exception as exc:
+            self.vars['save_status'].set(f'RViz error: {exc}')
+            self._save_status_label.configure(fg=COLORS['red'])
 
     # ─── Control del brazo 6-DOF (alternar GUI) ───────────────────────────
 

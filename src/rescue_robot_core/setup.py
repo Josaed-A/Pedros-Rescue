@@ -27,10 +27,10 @@ setup(
             'motor_driver_node = rescue_robot_core.nodes.motor_driver_node:main',
             'logitech_camera_node = rescue_robot_core.camera_drivers.logitech_camera_node:main',
             'astra_rgbd_camera_node = rescue_robot_core.camera_drivers.astra_rgbd_camera_node:main',
-            # ── Bus de servos Dynamixel (brazo AX-12A + patas) y EX-106+ ──
+            # ── Brazo 6-DOF — drivers de servos (corren en la Raspberry Pi) ──
             'dynamixel_bus_node = rescue_robot_core.nodes.dynamixel_bus_node:main',
-            'ex106_driver_node = rescue_robot_core.nodes.ex106_driver_node:main',
             'dynamixel_sim_node = rescue_robot_core.nodes.dynamixel_sim_node:main',
+            'ex106_driver_node = rescue_robot_core.nodes.ex106_driver_node:main',
         ],
     },
 )
