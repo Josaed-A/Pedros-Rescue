@@ -116,12 +116,16 @@ def generate_launch_description():
                     'lidar_topic':     '/ldlidar_node/scan',
                     'camera_topic':    '/camera/scan',
                     'output_topic':    '/scan_merged',
-                    'target_frame':    'base_footprint',
-                    'angle_min':       -3.14159,
-                    'angle_max':        3.14159,
-                    'angle_increment':  0.00873,
-                    'range_min':        0.10,
-                    'range_max':       12.0,
+                    'target_frame':          'base_footprint',
+                    'angle_min':             -3.14159,
+                    'angle_max':              3.14159,
+                    'angle_increment':        0.00873,
+                    'range_min':              0.10,
+                    'range_max':             12.0,
+                    # Filtro brazo: ignorar cono 310°→0°→30° del LiDAR
+                    # Solo se usan rayos en el arco 30°–310° (lados + atrás)
+                    'lidar_valid_min_deg':   30.0,
+                    'lidar_valid_max_deg':  310.0,
                 }],
             )
         ],
