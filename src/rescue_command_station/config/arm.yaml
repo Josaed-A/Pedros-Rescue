@@ -17,10 +17,9 @@ cinematica:
       - "Munieca_P"
       - "Munieca_Y"
       - "Munieca_R"
-    # Joints cuyo giro fisico va al reves del modelo cinematico. fk_sign los
-    # invierte en FK, en la semilla de IK y en el comando devuelto.
-    sim_invert_joints:
-      - "Munieca_P"
+    # Joints cuyo giro fisico va al reves del modelo cinematico (STRING separado
+    # por comas; vacio = ninguno). Invierte la FK (sim) y el comando de IK/teleop.
+    sim_invert_joints: "Munieca_P"
 
 simulacion:
   ros__parameters:

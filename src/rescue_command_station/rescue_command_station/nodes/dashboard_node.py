@@ -159,7 +159,9 @@ class DashboardRosNode(Node):
 
         # ── Estado de botones del mando (deteccion de flanco) ──────────
         self._prev_buttons = []
-        self._dpad_prev = False
+        self._dpad_prev = False          # flanco flecha ABAJO (cambio de GUI)
+        self._dpad_x_prev = False        # flanco flecha DERECHA (reconectar buses)
+        self.reconnect_requested = False # la GUI lo lee para reconectar AX+EX
         self.switch_gui_requested = False   # la GUI lo lee para alternar interfaz
         self.legs_enabled_dirty   = True    # fuerza al GUI a sincronizar checkboxes
         # True solo cuando el dashboard esta al frente: con el brazo abierto el
@@ -167,9 +169,13 @@ class DashboardRosNode(Node):
         self.legs_control_active  = True
 
         # Publica si el brazo esta al frente. El teleop del vehiculo lo respeta
-        # (manda cero), para NO poder manejar el vehiculo estando en el brazo.
+        # (manda cero), y la GUI del brazo lo usa para mostrarse/ocultarse.
         self._arm_active_pub = self.create_publisher(Bool, '/arm_active', 10)
         self.create_timer(0.2, self._publish_arm_active)
+        # El boton "volver" de la GUI del brazo pide regresar al dashboard.
+        self.create_subscription(Bool, '/gui_switch_request', self._cb_gui_switch, 10)
+        # Aviso de reinicio de buses (lo muestra tambien la GUI del brazo).
+        self._bus_reset_pub = self.create_publisher(Bool, '/bus_reset', 10)
 
         # ── Auto-conexion de los buses al arrancar (sin boton "conectar") ──
         self._autoconnected = False
@@ -181,6 +187,11 @@ class DashboardRosNode(Node):
         m = Bool()
         m.data = not self.legs_control_active   # brazo al frente == patas off
         self._arm_active_pub.publish(m)
+
+    def _cb_gui_switch(self, msg):
+        # La GUI del brazo pidio volver al dashboard (boton "volver").
+        if msg.data:
+            self.switch_gui_requested = True
 
     def _auto_connect_once(self):
         """Conecta los buses de servos automaticamente cuando los servicios
@@ -332,14 +343,21 @@ class DashboardRosNode(Node):
         self._legs_cmd_pub.publish(cmd)
 
     def _handle_dpad(self, msg):
-        """Cruz (D-pad, hat en ejes) → pide alternar entre dashboard y brazo.
-        Activa siempre, sin importar que GUI este al frente."""
+        """Flechas del D-pad (activas siempre, en cualquier GUI):
+          - ABAJO  → alternar entre dashboard (movimiento) y GUI del brazo
+          - DERECHA → reiniciar la conexion de los buses (AX-12A y EX-106)."""
         ax = msg.axes
-        dpad = (len(ax) > max(cfg.DPAD_AXIS_X, cfg.DPAD_AXIS_Y) and
-                (abs(ax[cfg.DPAD_AXIS_X]) > 0.5 or abs(ax[cfg.DPAD_AXIS_Y]) > 0.5))
-        if dpad and not self._dpad_prev:
+        down = (cfg.DPAD_AXIS_Y < len(ax) and
+                ax[cfg.DPAD_AXIS_Y] * cfg.DPAD_Y_DOWN > 0.5)
+        if down and not self._dpad_prev:
             self.switch_gui_requested = True
-        self._dpad_prev = dpad
+        self._dpad_prev = down
+
+        right = (cfg.DPAD_AXIS_X < len(ax) and
+                 ax[cfg.DPAD_AXIS_X] * cfg.DPAD_X_RIGHT > 0.5)
+        if right and not self._dpad_x_prev:
+            self.reconnect_requested = True
+        self._dpad_x_prev = right
 
     def _handle_leg_buttons(self, msg):
         """Flanco de subida de los botones cara → toggle de cada pata."""
@@ -417,6 +435,9 @@ class ModernDashboardApp:
 
         self.build_ui()
         self.refresh_ui()
+        # Precargar la GUI del brazo (oculta) ~1s despues de mostrar el dashboard,
+        # para que el primer cambio con la flecha abajo sea instantaneo.
+        self.root.after(1200, self._preload_arm)
 
     def _setup_treeview_style(self):
         style = ttk.Style()
@@ -582,7 +603,7 @@ class ModernDashboardApp:
             font=(FONT, 12, 'bold'), relief='flat', bd=0,
             pady=13, cursor='hand2',
             activebackground=COLORS['surface_soft'], activeforeground=COLORS['text'],
-            command=self._on_toggle_arm)
+            command=self._toggle_arm_visibility)
         self.btn_arm.pack(fill='x', pady=(8, 0))
 
         # ── Patas (stick derecho) ─────────────────────────────────
@@ -917,44 +938,38 @@ else:
 
     # ─── Control del brazo 6-DOF (alternar GUI) ───────────────────────────
 
-    def _on_toggle_arm(self):
-        """Lanza la GUI del brazo (arm_station) y oculta el dashboard.
+    def _preload_arm(self):
+        """Lanza la GUI del brazo (arm_station) UNA vez al inicio, oculta.
 
-        Solo una GUI visible a la vez. arm_station corre en este mismo
-        contenedor (ya sourcado). Al cerrar la GUI del brazo, su grupo de
-        proceso termina y el dashboard reaparece (ver _wait_arm).
-        Es un TOGGLE: si el brazo ya esta abierto, lo cierra (vuelve aqui)."""
+        La GUI del brazo arranca retraida y solo se muestra cuando /arm_active
+        es True. Al tenerla precargada, alternar dashboard<->brazo es
+        instantaneo (solo mostrar/ocultar ventanas), sin relanzar nada."""
         if self._arm_proc is not None and self._arm_proc.poll() is None:
-            # Ya esta abierto -> cerrarlo (su grupo termina -> reaparece el dashboard)
-            try:
-                os.killpg(os.getpgid(self._arm_proc.pid), signal.SIGINT)
-            except Exception:
-                pass
             return
         try:
             self._arm_proc = subprocess.Popen(
                 ['ros2', 'launch', 'rescue_command_station', 'arm_station.launch.py'],
                 start_new_session=True)
+            self.ros_node.get_logger().info('Precargando GUI del brazo (oculta)...')
         except Exception as e:
-            messagebox.showerror(
-                'Control del Brazo',
-                f'No se pudo lanzar la GUI del brazo:\n{e}')
-            return
-        # El brazo pasa al frente: el mando deja de controlar las patas
-        # (solo la cruz sigue activa para volver).
-        self.ros_node.legs_control_active = False
-        self.root.withdraw()
-        threading.Thread(target=self._wait_arm, daemon=True).start()
+            self.ros_node.get_logger().error(f'No se pudo precargar el brazo: {e}')
 
-    def _wait_arm(self):
-        try:
-            self._arm_proc.wait()
-        except Exception:
-            pass
-        # El dashboard vuelve al frente: el mando retoma el control de patas.
-        self.ros_node.legs_control_active = True
-        # Reaparecer el dashboard en el hilo de Tk (Tk no es thread-safe)
-        self.root.after(0, self.root.deiconify)
+    def _toggle_arm_visibility(self):
+        """Flecha ABAJO / boton: alterna entre dashboard (movimiento) y brazo.
+        El brazo ya corre oculto; solo cambiamos que ventana se ve. La GUI del
+        brazo se muestra/oculta sola al seguir /arm_active."""
+        if self._arm_proc is None or self._arm_proc.poll() is not None:
+            # Aun no precargado (o se cayo): precargar ahora.
+            self._preload_arm()
+        show_arm = self.ros_node.legs_control_active   # hoy el dashboard al frente?
+        # legs_control_active True = dashboard al frente. Al mostrar el brazo se
+        # apaga el control de patas y el del vehiculo (via /arm_active).
+        self.ros_node.legs_control_active = not show_arm
+        if show_arm:
+            self.root.withdraw()      # ocultar dashboard; el brazo aparece via /arm_active
+        else:
+            self.root.deiconify()     # volver al dashboard
+            self.root.lift()
 
     # ─── Patas ────────────────────────────────────────────────────────────
 
@@ -976,6 +991,20 @@ else:
         self._legs_status_label.configure(text='Reconectando buses de servos...',
                                           fg=COLORS['muted'])
 
+    def _on_legs_reset_buses(self):
+        """Reinicia la conexion de AMBOS buses (AX-12A y EX-106): desconecta y
+        vuelve a conectar ~0.6 s despues. Util para recuperarse de un error."""
+        self.ros_node.disconnect_all()
+        self._legs_status_label.configure(text='Reiniciando buses (AX + EX)...',
+                                          fg=COLORS['amber'])
+        self.root.after(600, self.ros_node.connect_all)
+        # Avisar tambien a la GUI del brazo (puede estar al frente).
+        try:
+            m = Bool(); m.data = True
+            self.ros_node._bus_reset_pub.publish(m)
+        except Exception:
+            pass
+
     def _on_legs_disconnect(self):
         self.ros_node.disconnect_all()
         self._legs_status_label.configure(text='Buses de servos DESCONECTADOS.',
@@ -993,10 +1022,14 @@ else:
             for name, var in self._leg_vars.items():
                 var.set(bool(self.ros_node.legs_enabled.get(name, True)))
             self.ros_node.legs_enabled_dirty = False
-        # Cambio de interfaz pedido por la cruz del mando
+        # Cambio de interfaz pedido por la flecha abajo (o el boton "volver")
         if getattr(self.ros_node, 'switch_gui_requested', False):
             self.ros_node.switch_gui_requested = False
-            self._on_toggle_arm()
+            self._toggle_arm_visibility()
+        # Flecha derecha → reiniciar conexion de los buses (AX + EX) por si hay error
+        if getattr(self.ros_node, 'reconnect_requested', False):
+            self.ros_node.reconnect_requested = False
+            self._on_legs_reset_buses()
         for name, lbl in self._leg_val_labels.items():
             deg = self.ros_node.legs_pos_deg.get(name, 0.0)
             lbl.configure(text=f'{deg:+.1f}°')
@@ -1353,7 +1386,7 @@ def main(args=None):
     ros_node = DashboardRosNode()
 
     root = tk.Tk()
-    ModernDashboardApp(root, ros_node)
+    app = ModernDashboardApp(root, ros_node)
 
     def request_close(_signum=None, _frame=None):
         try:
@@ -1380,6 +1413,13 @@ def main(args=None):
     try:
         root.mainloop()
     finally:
+        # Bajar la GUI del brazo precargada (todo su grupo de proceso).
+        arm_proc = getattr(app, '_arm_proc', None)
+        if arm_proc is not None and arm_proc.poll() is None:
+            try:
+                os.killpg(os.getpgid(arm_proc.pid), signal.SIGINT)
+            except Exception:
+                pass
         try:
             ros_node.destroy_node()
         except KeyboardInterrupt:

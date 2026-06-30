@@ -9,6 +9,13 @@ AXIS_RIGHT_Y = 4
 # Zona muerta para ignorar el reposo del stick.
 LEGS_DEADZONE = 0.35
 
+# Gatillos analogicos (L2/R2) para el teleop del brazo (eje Z). En este driver
+# reposo = +1.0 y presionado = -1.0.
+AXIS_L2 = 2
+AXIS_R2 = 5
+# Zona muerta de los sticks para el teleop cartesiano del brazo.
+ARM_DEADZONE = 0.30
+
 BUTTON_L1 = 4
 BUTTON_R1 = 5
 
@@ -28,11 +35,16 @@ LEG_BUTTONS = {
     'PataTrasDer': BUTTON_CROSS,      # ✕
 }
 
-# Cambiar entre dashboard y GUI del brazo con la CRUZ (D-pad). En el driver joy
-# del DS4 la cruz suele ser un "hat" en estos ejes (no botones). Si en tu mando
-# es distinto, ajusta estos indices.
+# Cambiar entre dashboard (movimiento) y GUI del brazo con la flecha ABAJO del
+# D-pad. En el driver joy del DS4 la cruz es un "hat" en estos ejes (no botones).
 DPAD_AXIS_X = 6
 DPAD_AXIS_Y = 7
+# Signo del eje vertical para "abajo". En este mando abajo=+1 (arriba=-1).
+# Si la flecha que alterna te queda invertida (arriba en vez de abajo), cambia el signo.
+DPAD_Y_DOWN = 1.0
+# La flecha DERECHA reinicia la conexion de los buses (AX-12A y EX-106). Signo
+# del eje horizontal para "derecha" (mismo criterio que abajo: derecha=+1).
+DPAD_X_RIGHT = 1.0
 
 # Axis orientation.
 STEER_MULTIPLIER = -1.0

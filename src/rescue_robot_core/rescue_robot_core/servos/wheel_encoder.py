@@ -115,7 +115,11 @@ class WheelEncoder:
                              + (pos / POS_MAX) * POS_RANGE)
         raw_salida        = self.angulo_motor / self.reduccion
         self.angulo_salida_acum = raw_salida - self._offset_deg
-        self.angulo_salida = self.angulo_salida_acum % 360.0
+        # Angulo con SIGNO en [-180, 180]. Antes era `% 360.0` ([0,360)), que en
+        # el home (0°) envolvia los angulos un poco negativos a ~360° y rompia
+        # el FK/IK y la lectura del home. El control usa error_circular (invariante
+        # al wrap), asi que esto solo cambia lo que se publica/visualiza.
+        self.angulo_salida = ((self.angulo_salida_acum + 180.0) % 360.0) - 180.0
 
     # ------------------------------------------------------------------
     #  Utilidades

@@ -29,19 +29,27 @@ import math
 import os
 import signal
 import threading
+import time
+import tkinter as tk
 import numpy as np
 
 import rclpy
 from rclpy.node import Node
-from sensor_msgs.msg import JointState
+from rclpy.qos import QoSHistoryPolicy, QoSProfile, QoSReliabilityPolicy
+from sensor_msgs.msg import JointState, Joy, CompressedImage
 from geometry_msgs.msg import PoseStamped
 from std_srvs.srv import Trigger
 
-from std_msgs.msg import Float64
+from std_msgs.msg import Bool, Float64, String
 from rescue_interfaces.msg import ArmStatus, CartesianState
 from rescue_interfaces.srv import (ComputeIK, ComputeIKPose, ServoCommand, ServoStatus,
                                 CartesianGoto, CartesianTrajectory)
 from rescue_interfaces.msg import CartesianWaypoint
+
+from rescue_command_station.control import config as cfg
+from rescue_command_station.vision.qr_detector import QrDetector
+from rescue_command_station.vision.ros_image import compressed_msg_to_numpy
+from rescue_command_station.vision.tk_image import bgr_frame_to_png_data
 
 import customtkinter as ctk
 
@@ -66,18 +74,101 @@ _DEFAULT_JOINT_SERVO = {
     'Munieca_R': ('ax', 5),
 }
 
+# Paleta alineada con el dashboard (rescue_command_station/nodes/dashboard_node.py)
 COL = {
-    'panel_bg':  '#0d1117',
-    'accent':    '#00d4ff',
-    'ok':        '#2ecc71',
-    'warn':      '#f39c12',
-    'err':       '#e74c3c',
-    'muted':     'gray',
-    'real':      '#3498db',
-    'real_dot':  '#e74c3c',
-    'prev':      '#e67e22',
-    'prev_dot':  '#f39c12',
+    'panel_bg':  '#0b0f14',   # bg del dashboard
+    'surface':   '#111821',   # surface del dashboard
+    'surface_high': '#17212d',
+    'accent':    '#38bdf8',   # cyan
+    'ok':        '#22c55e',   # green
+    'warn':      '#f59e0b',   # amber
+    'err':       '#ef4444',   # red
+    'muted':     '#94a3b8',
+    'text':      '#e7edf4',
+    'real':      '#60a5fa',   # blue
+    'real_dot':  '#ef4444',
+    'prev':      '#f59e0b',
+    'prev_dot':  '#f59e0b',
 }
+
+# Colores extra de la paleta del dashboard para el tema CTk
+_BG          = '#0b0f14'
+_SURFACE     = '#111821'
+_SURFACE_HI  = '#17212d'
+_SURFACE_SOFT = '#1c2733'
+_SURFACE_BTN = '#1e2d3d'
+_BORDER      = '#263544'
+_TEXT        = '#e7edf4'
+_MUTED       = '#94a3b8'
+_CYAN        = '#38bdf8'
+
+
+def _aplicar_tema_dashboard():
+    """Reescribe el tema global de customtkinter para que TODOS los widgets
+    (frames, botones, tabs, sliders, entries...) sigan la paleta oscura del
+    dashboard. Cada color del tema es [claro, oscuro]; forzamos ambos al mismo
+    valor oscuro para que el look sea identico al dashboard."""
+    T = ctk.ThemeManager.theme
+
+    def setc(widget, key, color):
+        if widget in T and key in T[widget]:
+            T[widget][key] = [color, color]
+
+    # Contenedores
+    setc('CTk', 'fg_color', _BG)
+    setc('CTkToplevel', 'fg_color', _BG)
+    setc('CTkFrame', 'fg_color', _SURFACE)
+    setc('CTkFrame', 'top_fg_color', _SURFACE_HI)
+    setc('CTkFrame', 'border_color', _BORDER)
+    setc('CTkScrollableFrame', 'label_fg_color', _SURFACE_HI)
+
+    # Botones (los que fijan fg_color propio —estop/resume/back— lo conservan)
+    setc('CTkButton', 'fg_color', _SURFACE_BTN)
+    setc('CTkButton', 'hover_color', _SURFACE_SOFT)
+    setc('CTkButton', 'border_color', _BORDER)
+    setc('CTkButton', 'text_color', _TEXT)
+
+    # Texto
+    setc('CTkLabel', 'text_color', _TEXT)
+
+    # Tabs (submodos del brazo)
+    setc('CTkTabview', 'fg_color', _SURFACE)
+    setc('CTkTabview', 'segmented_button_fg_color', _SURFACE_HI)
+    setc('CTkTabview', 'segmented_button_selected_color', _CYAN)
+    setc('CTkTabview', 'segmented_button_selected_hover_color', _CYAN)
+    setc('CTkTabview', 'segmented_button_unselected_color', _SURFACE_HI)
+    setc('CTkTabview', 'segmented_button_unselected_hover_color', _SURFACE_SOFT)
+    setc('CTkTabview', 'text_color', _TEXT)
+    setc('CTkSegmentedButton', 'fg_color', _SURFACE_HI)
+    setc('CTkSegmentedButton', 'selected_color', _CYAN)
+    setc('CTkSegmentedButton', 'selected_hover_color', _CYAN)
+    setc('CTkSegmentedButton', 'unselected_color', _SURFACE_HI)
+    setc('CTkSegmentedButton', 'unselected_hover_color', _SURFACE_SOFT)
+    setc('CTkSegmentedButton', 'text_color', _TEXT)
+
+    # Controles
+    setc('CTkSlider', 'fg_color', _SURFACE_SOFT)
+    setc('CTkSlider', 'progress_color', _CYAN)
+    setc('CTkSlider', 'button_color', _CYAN)
+    setc('CTkSlider', 'button_hover_color', _TEXT)
+    setc('CTkProgressBar', 'fg_color', _SURFACE_SOFT)
+    setc('CTkProgressBar', 'progress_color', _CYAN)
+    setc('CTkEntry', 'fg_color', _SURFACE_HI)
+    setc('CTkEntry', 'border_color', _BORDER)
+    setc('CTkEntry', 'text_color', _TEXT)
+    setc('CTkOptionMenu', 'fg_color', _SURFACE_BTN)
+    setc('CTkOptionMenu', 'button_color', _SURFACE_SOFT)
+    setc('CTkOptionMenu', 'button_hover_color', _SURFACE_HI)
+    setc('CTkOptionMenu', 'text_color', _TEXT)
+    setc('CTkComboBox', 'fg_color', _SURFACE_HI)
+    setc('CTkComboBox', 'border_color', _BORDER)
+    setc('CTkComboBox', 'button_color', _SURFACE_SOFT)
+    setc('CTkCheckBox', 'fg_color', _CYAN)
+    setc('CTkCheckBox', 'text_color', _TEXT)
+    setc('CTkSwitch', 'progress_color', _CYAN)
+
+
+_aplicar_tema_dashboard()
 
 
 def quaternion_to_rpy(q) -> tuple[float, float, float]:
@@ -226,7 +317,90 @@ class GUINode(Node):
             'cartesian_traj'  : self.create_client(CartesianTrajectory, '/cartesian/trajectory'),
         }
 
+        # ── Integracion con el dashboard ───────────────────────────
+        #   /arm_active: el dashboard dice si el brazo esta al frente (mostrar/ocultar)
+        #   /joy: L1/R1 alternan submodos (tabs) cuando el brazo esta al frente
+        #   /gui_switch_request: pide volver al dashboard (boton "volver")
+        self._req_active = False        # ultimo /arm_active recibido
+        self._submode_step = 0          # pasos L1/R1 pendientes de aplicar
+        self._prev_buttons: list = []
+        self._joy_axes: list = []       # ultimos ejes del mando (teleop cartesiano)
+        self._bus_reset_flag = False    # el dashboard pidio reiniciar los buses
+        self.create_subscription(Bool, '/arm_active', self._cb_arm_active, 10)
+        self.create_subscription(Joy, '/joy', self._cb_joy, 10)
+        self.create_subscription(Bool, '/bus_reset', self._cb_bus_reset, 10)
+        self._pub_switch = self.create_publisher(Bool, '/gui_switch_request', 10)
+
+        # ── Camara frontal (NO la Orbbec) + deteccion QR / senales ──
+        self.declare_parameter('front_camera_topic', '/robot/camera/front/image_raw/compressed')
+        front_topic = self.get_parameter('front_camera_topic').value
+        self.qr_detector = QrDetector()
+        self._cam_lock = threading.Lock()
+        self._cam_frame = None
+        self._cam_version = 0
+        self._qr_text = ''
+        self._last_detection = ''
+        self._last_qr_scan = 0.0
+        sensor_qos = QoSProfile(
+            reliability=QoSReliabilityPolicy.BEST_EFFORT,
+            history=QoSHistoryPolicy.KEEP_LAST, depth=1)
+        self.create_subscription(CompressedImage, front_topic, self._cb_front_cam, sensor_qos)
+        self.create_subscription(String, '/object_detections', self._cb_detections, 10)
+
         self.get_logger().info(f'Nodo GUI listo. Joints: {self._joint_order}')
+
+    # ── Integracion dashboard: visibilidad, mando, camara ─────────
+
+    def _cb_arm_active(self, msg):
+        self._req_active = bool(msg.data)
+
+    def _cb_bus_reset(self, msg):
+        if msg.data:
+            self._bus_reset_flag = True
+
+    def _cb_joy(self, msg):
+        """L1/R1 → alternar submodos (tabs). Ejes → teleop cartesiano (los lee
+        la App). Solo con el brazo al frente."""
+        if not self._req_active:
+            self._prev_buttons = list(msg.buttons)
+            self._joy_axes = []
+            return
+        self._joy_axes = list(msg.axes)
+        btn = msg.buttons
+
+        def pressed(idx):
+            return (idx < len(btn) and btn[idx] and
+                    (idx >= len(self._prev_buttons) or not self._prev_buttons[idx]))
+
+        if pressed(cfg.BUTTON_R1):
+            self._submode_step += 1
+        if pressed(cfg.BUTTON_L1):
+            self._submode_step -= 1
+        self._prev_buttons = list(btn)
+
+    def pedir_dashboard(self):
+        """Publica la peticion de volver al dashboard (boton 'volver')."""
+        m = Bool(); m.data = True
+        self._pub_switch.publish(m)
+
+    def _cb_front_cam(self, msg):
+        try:
+            frame = compressed_msg_to_numpy(msg)
+            now = time.time()
+            if now - self._last_qr_scan >= 0.25:
+                self._last_qr_scan = now
+                frame, qr = self.qr_detector.detect_and_annotate(frame)
+                if qr:
+                    self._qr_text = qr
+            with self._cam_lock:
+                self._cam_frame = frame
+                self._cam_version += 1
+        except Exception as exc:
+            self.get_logger().warn(f'front_camera: {exc}', throttle_duration_sec=5.0)
+
+    def _cb_detections(self, msg):
+        if msg.data:
+            self._last_detection = msg.data
 
     # ── Lectura de configuracion desde YAML ───────────────────────
 
@@ -679,12 +853,21 @@ class App(ctk.CTk):
         self._pending_teleop_q  : list | None  = None
         self._pending_teleop_msg: tuple | None = None
         self._pending_teleop_commit: tuple | None = None
+        self._joy_ik_inflight    = False   # 1 sola peticion IK por joystick a la vez
+        self._joy_inflight_ticks = 0       # timeout de seguridad si la IK no responde
+        self._bus_reset_ticks    = 0       # ticks restantes del banner de reinicio de buses
         self._last_cart_in_prog  = False   # detecta flanco bajada para re-habilitar btn
 
         self.title('Brazo 6-DOF — Control ROS2')
         self.geometry('1380x820')
         self.minsize(1100, 700)
         self.resizable(True, True)
+        self.configure(fg_color=COL['panel_bg'])
+
+        # Arranca OCULTA: el dashboard la precarga y la muestra con la flecha
+        # abajo (via /arm_active). Asi alternar es instantaneo.
+        self.withdraw()
+        self._is_shown = False
 
         self._build_ui()
         self.after(120, self._loop_ui)
@@ -712,7 +895,7 @@ class App(ctk.CTk):
         header.grid_columnconfigure(1, weight=1)
         self.btn_back = ctk.CTkButton(
             header, text='⟵ Dashboard', width=120, height=30,
-            fg_color='#5d6d7e', hover_color='#34495e', command=self.on_closing)
+            fg_color='#5d6d7e', hover_color='#34495e', command=self._node.pedir_dashboard)
         self.btn_back.grid(row=0, column=0, padx=(8, 6))
         ctk.CTkLabel(header, text='Brazo 6-DOF',
                      font=('Roboto', 18, 'bold')).grid(row=0, column=1)
@@ -773,10 +956,12 @@ class App(ctk.CTk):
         self.lbl_vel = ctk.CTkLabel(vel_row, text='100 %', width=46)
         self.lbl_vel.grid(row=0, column=2, padx=4)
 
-        # ── Pestanas de control ───────────────────────────────────
+        # ── Pestanas de control (submodos; se ciclan con L1/R1) ────
         self.tabs = ctk.CTkTabview(left)
         self.tabs.grid(row=3, column=0, sticky='nsew', padx=8, pady=4)
-        for name in ('Mover', 'Teleop', 'IK', 'Calibrar', 'Rescate', 'Estado'):
+        self._tab_order = ['Mover', 'Teleop', 'IK', 'Calibrar',
+                           'Rescate', 'Estado']
+        for name in self._tab_order:
             self.tabs.add(name)
 
         self._build_tab_fk(self.tabs.tab('Mover'))
@@ -785,6 +970,24 @@ class App(ctk.CTk):
         self._build_tab_calib(self.tabs.tab('Calibrar'))
         self._build_tab_rescue(self.tabs.tab('Rescate'))
         self._build_tab_estado(self.tabs.tab('Estado'))
+
+    def _refresh_camera(self):
+        """Renderiza la ultima imagen de la camara frontal + QR/senal."""
+        n = self._node
+        if n._cam_version != self._drawn_cam_version:
+            with n._cam_lock:
+                frame = None if n._cam_frame is None else n._cam_frame.copy()
+                self._drawn_cam_version = n._cam_version
+            if frame is not None:
+                w = self.cam_label.winfo_width()
+                h = self.cam_label.winfo_height()
+                png = bgr_frame_to_png_data(frame, max_width=w if w > 10 else 520,
+                                            max_height=h if h > 10 else 280)
+                if png is not None:
+                    self.cam_photo = tk.PhotoImage(data=png, format='png')
+                    self.cam_label.configure(image=self.cam_photo, text='')
+        self.lbl_qr.configure(text=f'QR: {n._qr_text or "—"}')
+        self.lbl_det.configure(text=f'Senal: {n._last_detection or "—"}')
 
     # ── Tab FK: sliders por articulacion ──────────────────────────
 
@@ -851,6 +1054,13 @@ class App(ctk.CTk):
         ctk.CTkLabel(frame, text='Teleoperacion de camara (ejes locales)',
                      font=('Roboto', 13, 'bold')).pack(pady=(4, 2))
 
+        # Indicador de joystick: se ilumina (verde) cuando esta moviendo el brazo.
+        self.lbl_joy_state = ctk.CTkLabel(
+            frame, text='● Joystick:  Izq → X/Y   Gatillos → Z   Der → rotacion',
+            font=('Roboto', 12, 'bold'), text_color=COL['muted'],
+            fg_color=COL['surface'], corner_radius=6, height=30)
+        self.lbl_joy_state.pack(fill='x', padx=6, pady=(2, 6))
+
         # Selector de modo
         self.var_teleop_mode = ctk.StringVar(value='Translacion')
         ctk.CTkSegmentedButton(
@@ -887,7 +1097,7 @@ class App(ctk.CTk):
 
         # Marco de referencia: Mundo (base) = lineas rectas X/Y/Z fijas;
         # Camara = ejes locales de la punta (seguir la orientacion actual).
-        self.var_tp_frame = ctk.StringVar(value='Mundo')
+        self.var_tp_frame = ctk.StringVar(value='Camara')
         fr_sel = ctk.CTkFrame(self._tp_frame_trans, fg_color='transparent')
         fr_sel.pack(fill='x', pady=(0, 4))
         ctk.CTkLabel(fr_sel, text='Ejes:').pack(side='left', padx=(2, 4))
@@ -982,8 +1192,14 @@ class App(ctk.CTk):
         if self._tp_p is None:
             return
         p = self._tp_p
-        self.lbl_tp_pose.configure(
-            text=f'objetivo  x {p[0]:+.3f}  y {p[1]:+.3f}  z {p[2]:+.3f} m')
+        txt = f'objetivo  x {p[0]:+.3f}  y {p[1]:+.3f}  z {p[2]:+.3f} m'
+        if self._tp_R is not None:
+            R = self._tp_R
+            pitch = math.degrees(-math.asin(max(-1.0, min(1.0, R[2, 0]))))
+            roll  = math.degrees(math.atan2(R[2, 1], R[2, 2]))
+            yaw   = math.degrees(math.atan2(R[1, 0], R[0, 0]))
+            txt += f'\norient  R {roll:+.0f}  P {pitch:+.0f}  Y {yaw:+.0f}°'
+        self.lbl_tp_pose.configure(text=txt)
 
     def _teleop_toggle_stab(self):
         """Activa/desactiva estabilizacion de orientacion de la camara."""
@@ -1082,6 +1298,76 @@ class App(ctk.CTk):
                 self._pending_teleop_msg = (f'No alcanzable: {msg}', COL['err'])
 
         self._node.pedir_ik_pose(p_new, R_send, elbow, _cb)
+
+    def _joystick_teleop_step(self):
+        """Teleop cartesiano con el mando (pestana Teleop, brazo al frente).
+        SIEMPRE en ejes de la CAMARA (locales a la punta) y combina traslacion
+        + orientacion en una sola IK:
+          - stick IZQUIERDO → traslacion X / Y
+          - gatillos L2/R2  → traslacion Z (R2 acerca/aleja segun signo)
+          - stick DERECHO   → rotacion (yaw / pitch)
+        Mientras mantengas el stick, se va desplazando (1 paso por ciclo).
+        Manda 1 sola peticion IK a la vez."""
+        axes = self._node._joy_axes
+        dz = cfg.ARM_DEADZONE
+
+        def ax(i):
+            v = axes[i] if (axes and i < len(axes)) else 0.0
+            return v if abs(v) > dz else 0.0
+
+        def trig(i):                    # gatillo: reposo +1, presionado -1 → 0..1
+            v = axes[i] if (axes and i < len(axes)) else 1.0
+            return max(0.0, (1.0 - v) / 2.0)
+
+        # Stick IZQUIERDO → X/Y ;  gatillos → Z ;  stick DERECHO → rotacion
+        tx = ax(cfg.AXIS_LEFT_X)
+        ty = ax(cfg.AXIS_LEFT_Y)
+        tz = trig(cfg.AXIS_R2) - trig(cfg.AXIS_L2)
+        ryaw   = ax(cfg.AXIS_RIGHT_X)
+        rpitch = ax(cfg.AXIS_RIGHT_Y)
+
+        active = bool(tx or ty or tz or ryaw or rpitch)
+        self._set_joy_indicator(active)
+        if not active:
+            return
+
+        # 1 sola IK a la vez (con timeout de seguridad si no responde)
+        if self._joy_ik_inflight:
+            self._joy_inflight_ticks += 1
+            if self._joy_inflight_ticks < 16:   # ~2 s a 120 ms/loop
+                return
+            self._joy_ik_inflight = False
+        if not self._teleop_ensure_seed():
+            return
+
+        # Traslacion en ejes de la CAMARA (columnas de R = ejes locales de la punta)
+        lin = self._tp_lin_step()
+        basis = self._tp_R
+        # stick Y suele venir invertido (arriba = -1)
+        dp = lin * (tx * basis[:, 0] - ty * basis[:, 1] + tz * basis[:, 2])
+        p_new = self._tp_p + dp
+
+        # Orientacion: incremento en el frame local de la punta
+        ang = math.radians(self._tp_ang_step())
+        R_new = self._tp_R @ _rotz3(ryaw * ang) @ _roty3(-rpitch * ang)
+
+        self._joy_ik_inflight = True
+        self._joy_inflight_ticks = 0
+        self._teleop_send(p_new, R_new)
+
+    def _set_joy_indicator(self, active):
+        """Ilumina (verde) el indicador del teleop cuando el mando mueve el brazo."""
+        if getattr(self, '_joy_ind_on', None) == active:
+            return
+        self._joy_ind_on = active
+        if active:
+            self.lbl_joy_state.configure(
+                text='● MOVIENDO  —  Izq X/Y · Gatillos Z · Der rotacion',
+                text_color=COL['panel_bg'], fg_color=COL['ok'])
+        else:
+            self.lbl_joy_state.configure(
+                text='● Joystick:  Izq → X/Y   Gatillos → Z   Der → rotacion',
+                text_color=COL['muted'], fg_color=COL['surface'])
 
     # ── Tab IK ────────────────────────────────────────────────────
 
@@ -1351,12 +1637,13 @@ class App(ctk.CTk):
     def _build_right_panel(self):
         right = ctk.CTkFrame(self)
         right.grid(row=0, column=1, sticky='nsew', padx=(4, 8), pady=8)
-        right.grid_rowconfigure(0, weight=1)
+        right.grid_rowconfigure(0, weight=3)   # viz 3D
+        right.grid_rowconfigure(1, weight=2)   # camara frontal
         right.grid_columnconfigure(0, weight=1)
 
         reach = self._node.reach
 
-        self._fig = Figure(figsize=(7, 7), facecolor='#1a1a2e')
+        self._fig = Figure(figsize=(7, 7), facecolor=COL['panel_bg'])
         gs = self._fig.add_gridspec(2, 2, hspace=0.32, wspace=0.28,
                                     height_ratios=[1.6, 1.0])
 
@@ -1413,6 +1700,26 @@ class App(ctk.CTk):
         self._canvas = FigureCanvasTkAgg(self._fig, master=right)
         self._canvas.get_tk_widget().grid(row=0, column=0, sticky='nsew',
                                           padx=4, pady=4)
+
+        # ── Camara frontal (NO la Orbbec) + QR/senales, lado derecho ──
+        cam = ctk.CTkFrame(right, fg_color=COL['surface'])
+        cam.grid(row=1, column=0, sticky='nsew', padx=4, pady=(0, 4))
+        cam.grid_columnconfigure(0, weight=1)
+        cam.grid_rowconfigure(1, weight=1)
+        ctk.CTkLabel(cam, text='Camara frontal', anchor='w',
+                     text_color=COL['muted'], font=('Roboto', 12, 'bold')
+                     ).grid(row=0, column=0, sticky='ew', padx=8, pady=(6, 2))
+        self.cam_label = tk.Label(cam, text='Sin imagen de camara frontal',
+                                  bg=COL['surface'], fg=COL['muted'])
+        self.cam_label.grid(row=1, column=0, sticky='nsew', padx=8, pady=2)
+        self.cam_photo = None
+        self._drawn_cam_version = -1
+        self.lbl_qr = ctk.CTkLabel(cam, text='QR: —', anchor='w',
+                                   text_color=COL['accent'], font=('Roboto', 12, 'bold'))
+        self.lbl_qr.grid(row=2, column=0, sticky='ew', padx=8)
+        self.lbl_det = ctk.CTkLabel(cam, text='Senal: —', anchor='w',
+                                    text_color=COL['warn'], font=('Roboto', 12, 'bold'))
+        self.lbl_det.grid(row=3, column=0, sticky='ew', padx=8, pady=(0, 6))
 
     def _redraw_arm(self):
         pts, pts_pre, version = self._node.puntos_brazo()
@@ -1674,6 +1981,35 @@ class App(ctk.CTk):
     # ── Loop UI (120 ms) ──────────────────────────────────────────
 
     def _loop_ui(self):
+        # ── Mostrar/ocultar segun /arm_active (lo manda el dashboard) ──
+        want = self._node._req_active
+        if want and not self._is_shown:
+            self.deiconify(); self.lift(); self._is_shown = True
+            try:    self.tabs.set('Teleop')   # al entrar al brazo, Teleop primero
+            except Exception: pass
+        elif not want and self._is_shown:
+            self.withdraw(); self._is_shown = False
+
+        # Si esta oculta, no gastamos en UI ni en el 3D: reagendar y salir.
+        if not self._is_shown:
+            self._node._submode_step = 0   # descartar pasos L1/R1 mientras oculta
+            self.after(150, self._loop_ui)
+            return
+
+        # ── L1/R1 → ciclar submodos (tabs) ──
+        step = self._node._submode_step
+        if step:
+            self._node._submode_step = 0
+            try:
+                cur = self.tabs.get()
+                i = (self._tab_order.index(cur) + step) % len(self._tab_order)
+                self.tabs.set(self._tab_order[i])
+            except Exception:
+                pass
+
+        # ── Camara frontal + QR/senal (lado derecho, siempre visible) ──
+        self._refresh_camera()
+
         joint_order = self._node.joint_order
         ax_st = self._node.ax_status
         ex_st = self._node.ex_status
@@ -1734,10 +2070,19 @@ class App(ctk.CTk):
         self.btn_tp_sync.configure(
             state='normal' if pose is not None else 'disabled')
 
-        # Banner de estado global
+        # Aviso de reinicio de buses (flecha derecha del D-pad) — ~2.4 s
+        if self._node._bus_reset_flag:
+            self._node._bus_reset_flag = False
+            self._bus_reset_ticks = 20
+
+        # Banner de estado global (el paro de emergencia tiene prioridad)
         if eme:
             self.lbl_global.configure(text='PARO DE EMERGENCIA',
                                       text_color=COL['err'])
+        elif self._bus_reset_ticks > 0:
+            self._bus_reset_ticks -= 1
+            self.lbl_global.configure(text='↻ REINICIANDO BUSES (AX + EX)...',
+                                      text_color=COL['accent'])
         elif cal:
             self.lbl_global.configure(text='CALIBRACION ACTIVA',
                                       text_color=COL['warn'])
@@ -1775,6 +2120,7 @@ class App(ctk.CTk):
             text, color = self._pending_teleop_msg
             self.lbl_tp_msg.configure(text=text, text_color=color)
             self._pending_teleop_msg = None
+            self._joy_ik_inflight = False   # llego resultado: liberar para el siguiente paso
 
         if self._pending_teleop_q is not None:
             if self._pending_teleop_commit is not None:
@@ -1785,6 +2131,10 @@ class App(ctk.CTk):
                 np.array(self._pending_teleop_q), self._vel())
             self._node.publicar_preview(np.array(self._pending_teleop_q))
             self._pending_teleop_q = None
+
+        # ── Teleop por joystick (solo en la pestana Teleop) ──
+        if self.tabs.get() == 'Teleop':
+            self._joystick_teleop_step()
 
         if self._pending_ik_msg is not None:
             texto, color = self._pending_ik_msg
@@ -1890,7 +2240,9 @@ def main(args=None):
     ros_thread.start()
 
     app = App(node)
-    app.protocol('WM_DELETE_WINDOW', app.on_closing)
+    # La X de la ventana del brazo NO mata el proceso (el dashboard lo precarga
+    # y es dueno del ciclo de vida): solo pide volver al dashboard (se oculta).
+    app.protocol('WM_DELETE_WINDOW', node.pedir_dashboard)
     app.mainloop()
 
     # Detener primero el contexto para que el thread de spin salga limpio

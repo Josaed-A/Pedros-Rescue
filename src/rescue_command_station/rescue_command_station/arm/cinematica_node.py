@@ -55,9 +55,11 @@ class CinematicaNode(Node):
         self.declare_parameter('tool_length',  0.10)
         self.declare_parameter('joint_order',
             ['Base', 'Hombro', 'Codo', 'Munieca_P', 'Munieca_Y', 'Munieca_R'])
-        # Joints cuyo sentido de giro en la visualizacion va invertido respecto
-        # al servo real (el modelo cinematico gira al reves que el hardware).
-        self.declare_parameter('sim_invert_joints', ['Munieca_P'])
+        # Joints cuyo giro fisico va al reves del modelo. Se declara como STRING
+        # separado por comas (no lista), porque una lista VACIA en ROS2 deja el
+        # parametro sin inicializar (no puede inferir el tipo) y el nodo crashea.
+        # Vacio ("") = ningun joint invertido.
+        self.declare_parameter('sim_invert_joints', 'Munieca_P')
 
         p = ArmParams(
             base_height = self.get_parameter('base_height').value,
@@ -73,7 +75,8 @@ class CinematicaNode(Node):
 
         # Signo de visualizacion por joint: -1 invierte el sentido en la FK
         # (solo afecta el dibujo/pose, no los comandos al servo).
-        invertidos = list(self.get_parameter('sim_invert_joints').value)
+        raw_inv = self.get_parameter('sim_invert_joints').value
+        invertidos = [s.strip() for s in str(raw_inv).split(',') if s.strip()]
         self._fk_sign = np.array(
             [-1.0 if name in invertidos else 1.0 for name in self._joint_order])
 
