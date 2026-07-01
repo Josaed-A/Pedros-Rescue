@@ -75,6 +75,10 @@ RUN apt-get update && apt-get install -y \
 RUN pip3 install --no-cache-dir ultralytics==8.3.* 2>/dev/null || \
     pip3 install --no-cache-dir ultralytics
 
+# ── zxing-cpp — detector QR (más resiliente que cv2.QRCodeDetector/pyzbar
+# ante ángulo, distancia y códigos parcialmente cortados) ────────────
+RUN pip3 install --no-cache-dir --break-system-packages --ignore-installed zxing-cpp
+
 # ── GUI del brazo 6-DOF (rescue_command_station/arm): customtkinter + matplotlib ─
 RUN pip3 install --no-cache-dir customtkinter matplotlib 2>/dev/null || \
     pip3 install --no-cache-dir --break-system-packages customtkinter matplotlib

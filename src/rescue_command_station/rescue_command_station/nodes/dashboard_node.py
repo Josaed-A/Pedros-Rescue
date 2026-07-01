@@ -110,7 +110,7 @@ class DashboardRosNode(Node):
         self._popup_queue: list = []
         self._shown_detection_keys: dict = {}   # key -> last_queued_timestamp
         self._detection_popup_cooldown = 90.0   # seconds before re-alerting same detection
-        self._last_qr_popup_text = ''
+        self._qr_popup_cooldown = 10.0          # QR se re-muestra más seguido que hazmat/AprilTag
 
         # Detection list (from /object_detections + manual injections)
         self.latest_detections: list = []
@@ -278,8 +278,23 @@ class DashboardRosNode(Node):
                 frame, qr_text = self.qr_detector.detect_and_annotate(frame)
                 if qr_text:
                     self.latest_qr_text = qr_text
-                    if qr_text != self._last_qr_popup_text:
-                        self._last_qr_popup_text = qr_text
+
+                    # Se marca SIEMPRE que se lee, ya se haya visto antes o no
+                    # (igual que hazmat/AprilTag/YOLO en detections_callback).
+                    det = {
+                        'type': 'qr_code',
+                        'name': qr_text,
+                        '_time': datetime.datetime.now().strftime('%H:%M:%S'),
+                    }
+                    self.latest_detections.insert(0, det)
+                    self.latest_detections = self.latest_detections[:50]
+
+                    # El popup sí se limita con el mismo cooldown que el resto
+                    # de detecciones, para no bloquear la GUI cada 0.25s
+                    # mientras el mismo QR sigue en cuadro.
+                    key = f'qr_code:{qr_text}'
+                    if now - self._shown_detection_keys.get(key, 0.0) > self._qr_popup_cooldown:
+                        self._shown_detection_keys[key] = now
                         self._popup_queue.append({
                             'kind': 'qr',
                             'text': qr_text,
@@ -1220,6 +1235,7 @@ class ModernDashboardApp:
             'ar_code':     'AR Code',
             'hazmat_sign': 'Hazmat',
             'real_object': 'Objeto',
+            'qr_code':     'QR',
         }
         for det in dets[:25]:
             hora   = det.get('_time', '--:--:--')
