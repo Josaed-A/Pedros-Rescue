@@ -1,3 +1,4 @@
+import base64
 import csv
 import datetime
 import json
@@ -102,6 +103,12 @@ class DashboardRosNode(Node):
         self.qr_scan_interval             = 0.25
         self.last_raspberry_msg_time      = None
         self.last_raspberry_source        = 'sin datos'
+
+        # Popup queue: dicts pushed by callbacks, consumed by the GUI thread
+        self._popup_queue: list = []
+        self._shown_detection_keys: dict = {}   # key -> last_queued_timestamp
+        self._detection_popup_cooldown = 90.0   # seconds before re-alerting same detection
+        self._last_qr_popup_text = ''
 
         # Detection list (from /object_detections + manual injections)
         self.latest_detections: list = []
@@ -252,6 +259,13 @@ class DashboardRosNode(Node):
                 frame, qr_text = self.qr_detector.detect_and_annotate(frame)
                 if qr_text:
                     self.latest_qr_text = qr_text
+                    if qr_text != self._last_qr_popup_text:
+                        self._last_qr_popup_text = qr_text
+                        self._popup_queue.append({
+                            'kind': 'qr',
+                            'text': qr_text,
+                            'frame': frame.copy(),
+                        })
             self.latest_front_frame = frame
             self.front_camera_frames += 1
         except Exception as exc:
@@ -278,6 +292,19 @@ class DashboardRosNode(Node):
             det['_time'] = datetime.datetime.now().strftime('%H:%M:%S')
             self.latest_detections.insert(0, det)
             self.latest_detections = self.latest_detections[:50]
+
+            key = f"{det.get('type', '?')}:{det.get('name', '?')}"
+            now = self.now_seconds()
+            if now - self._shown_detection_keys.get(key, 0.0) > self._detection_popup_cooldown:
+                self._shown_detection_keys[key] = now
+                snap = (self.latest_astra_annotated_frame
+                        if self.latest_astra_annotated_frame is not None
+                        else self.latest_astra_color_frame)
+                self._popup_queue.append({
+                    'kind': 'detection',
+                    'det': det,
+                    'frame': snap.copy() if snap is not None else None,
+                })
         except Exception:
             pass
 
@@ -398,6 +425,9 @@ class ModernDashboardApp:
         self._rviz_proc: subprocess.Popen | None = None
         # GUI del brazo (arm_station) — proceso aparte; se alterna con el dashboard
         self._arm_proc: subprocess.Popen | None = None
+
+        # Popup state — at most one modal open at a time
+        self._popup_open = False
 
         self.root.title('Pedro Rescue - Estacion de Mando')
         self.root.geometry('1460x840')
@@ -1245,6 +1275,7 @@ class ModernDashboardApp:
         self.refresh_cameras()
         self._refresh_det_tree()
         self._refresh_legs()
+        self._check_popup_queue()
         self.root.after(50, self.refresh_ui)
 
     def refresh_raspberry_status(self):
@@ -1309,6 +1340,152 @@ class ModernDashboardApp:
             self.rendered_astra_frames = raw
 
         self.vars['qr'].set(self.ros_node.latest_qr_text or 'Sin QR detectado')
+
+    # ─── Popup modal de detección / QR ───────────────────────────────────────
+
+    def _check_popup_queue(self):
+        if self._popup_open or not self.ros_node._popup_queue:
+            return
+        self._popup_open = True
+        item = self.ros_node._popup_queue.pop(0)
+        if item['kind'] == 'detection':
+            self._show_detection_popup(item)
+        elif item['kind'] == 'qr':
+            self._show_qr_popup(item)
+
+    def _make_popup(self, title):
+        popup = tk.Toplevel(self.root)
+        popup.title(title)
+        popup.configure(bg=COLORS['bg'])
+        popup.resizable(False, False)
+        popup.transient(self.root)
+        popup.grab_set()
+        popup.focus_force()
+        return popup
+
+    def _center_popup(self, popup):
+        popup.update_idletasks()
+        sw = self.root.winfo_screenwidth()
+        sh = self.root.winfo_screenheight()
+        w = popup.winfo_reqwidth()
+        h = popup.winfo_reqheight()
+        popup.geometry(f'+{max(0, (sw - w) // 2)}+{max(0, (sh - h) // 2)}')
+
+    def _show_detection_popup(self, item):
+        det = item['det']
+        det_type = det.get('type', '?')
+        name = det.get('name', '?')
+        confidence = det.get('confidence', None)
+        frame = item.get('frame')
+
+        TYPE_INFO = {
+            'hazmat_sign': (COLORS['amber'],  COLORS['amber_bg'],  '⚠  HAZMAT DETECTADO'),
+            'ar_code':     (COLORS['cyan'],   COLORS['blue_bg'],   '▣  CÓDIGO AR DETECTADO'),
+            'real_object': (COLORS['green'],  COLORS['green_bg'],  '◎  OBJETO DETECTADO'),
+        }
+        fg, bg, header_text = TYPE_INFO.get(
+            det_type, (COLORS['text'], COLORS['surface_high'], 'DETECCIÓN'))
+
+        popup = self._make_popup('Detección')
+
+        tk.Label(popup, text=header_text, bg=bg, fg=fg,
+                 font=(FONT, 16, 'bold'), padx=30, pady=14).pack(fill='x')
+
+        tk.Label(popup, text=name, bg=COLORS['bg'], fg=COLORS['text'],
+                 font=(FONT, 32, 'bold'), pady=8).pack()
+
+        if confidence is not None:
+            tk.Label(popup, text=f'Confianza: {confidence * 100:.0f}%',
+                     bg=COLORS['bg'], fg=COLORS['muted'],
+                     font=(FONT, 12)).pack()
+
+        if frame is not None:
+            try:
+                png_data = bgr_frame_to_png_data(frame, max_width=500, max_height=320)
+                if png_data:
+                    photo = tk.PhotoImage(data=png_data, format='png')
+                    img_lbl = tk.Label(popup, image=photo, bg=COLORS['bg'], pady=6)
+                    img_lbl.image = photo
+                    img_lbl.pack()
+            except Exception:
+                pass
+
+        def close():
+            self._popup_open = False
+            popup.grab_release()
+            popup.destroy()
+
+        popup.protocol('WM_DELETE_WINDOW', close)
+        tk.Button(popup, text='CONTINUAR  ▶', bg=fg, fg=COLORS['black'],
+                  font=(FONT, 14, 'bold'), relief='flat', bd=0,
+                  padx=40, pady=14, cursor='hand2',
+                  command=close).pack(pady=(8, 20))
+
+        self._center_popup(popup)
+
+    def _show_qr_popup(self, item):
+        text = item['text']
+        frame = item.get('frame')
+
+        popup = self._make_popup('QR Detectado')
+
+        tk.Label(popup, text='▣  QR DETECTADO', bg=COLORS['blue_bg'], fg=COLORS['cyan'],
+                 font=(FONT, 16, 'bold'), padx=30, pady=14).pack(fill='x')
+
+        # Try to decode base64 image payload (data URL format)
+        qr_image_photo = None
+        try:
+            if text.startswith('data:image/'):
+                _, b64data = text.split(',', 1)
+                import numpy as _np
+                import cv2 as _cv2
+                arr = _np.frombuffer(base64.b64decode(b64data), dtype=_np.uint8)
+                decoded_img = _cv2.imdecode(arr, _cv2.IMREAD_COLOR)
+                if decoded_img is not None:
+                    png_data = bgr_frame_to_png_data(decoded_img, max_width=420, max_height=300)
+                    if png_data:
+                        qr_image_photo = tk.PhotoImage(data=png_data, format='png')
+        except Exception:
+            pass
+
+        if qr_image_photo:
+            img_lbl = tk.Label(popup, image=qr_image_photo, bg=COLORS['bg'], pady=10)
+            img_lbl.image = qr_image_photo
+            img_lbl.pack()
+            tk.Label(popup, text='Imagen decodificada del QR',
+                     bg=COLORS['bg'], fg=COLORS['muted'], font=(FONT, 9)).pack()
+        else:
+            content = tk.Frame(popup, bg=COLORS['surface_high'], padx=20, pady=16)
+            content.pack(fill='x', padx=20, pady=(10, 0))
+            tk.Label(content, text=text, bg=COLORS['surface_high'], fg=COLORS['text'],
+                     font=(FONT, 13), wraplength=520, justify='left').pack()
+
+        if frame is not None:
+            try:
+                png_data = bgr_frame_to_png_data(frame, max_width=420, max_height=260)
+                if png_data:
+                    photo = tk.PhotoImage(data=png_data, format='png')
+                    tk.Label(popup, text='Imagen de la cámara:',
+                             bg=COLORS['bg'], fg=COLORS['muted'],
+                             font=(FONT, 9)).pack(pady=(10, 2))
+                    img_lbl2 = tk.Label(popup, image=photo, bg=COLORS['bg'])
+                    img_lbl2.image = photo
+                    img_lbl2.pack()
+            except Exception:
+                pass
+
+        def close():
+            self._popup_open = False
+            popup.grab_release()
+            popup.destroy()
+
+        popup.protocol('WM_DELETE_WINDOW', close)
+        tk.Button(popup, text='CERRAR  ✕', bg=COLORS['cyan'], fg=COLORS['black'],
+                  font=(FONT, 14, 'bold'), relief='flat', bd=0,
+                  padx=40, pady=14, cursor='hand2',
+                  command=close).pack(pady=(12, 20))
+
+        self._center_popup(popup)
 
     def update_video_image(self, frame, label, photo_attr, max_w, max_h):
         if frame is None:
