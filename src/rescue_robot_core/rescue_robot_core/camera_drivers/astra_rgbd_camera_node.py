@@ -1,3 +1,5 @@
+import glob
+import os
 import threading
 import time
 
@@ -26,6 +28,11 @@ class AstraRgbdCameraNode(Node):
         # requiere OpenNI2, por eso queda deshabilitada por defecto.
         self.declare_parameter('depth_index', -1)
         self.declare_parameter('color_index', 2)
+        # Patron by-id del symlink estable de la camara RGB de la Astra. Con dos
+        # camaras UVC (p.ej. Logitech + Astra) el numero /dev/videoN baila entre
+        # arranques, asi que resolvemos el indice real por by-id y solo caemos a
+        # color_index si no hay coincidencia. Dejalo vacio para forzar el indice.
+        self.declare_parameter('color_by_id', 'usb-Astra_Pro_HD_Camera*-video-index0')
         self.declare_parameter('width', 640)
         self.declare_parameter('height', 480)
         self.declare_parameter('fps', 30)
@@ -54,6 +61,10 @@ class AstraRgbdCameraNode(Node):
 
         self.depth_index = self.get_parameter('depth_index').value
         self.color_index = self.get_parameter('color_index').value
+        self.color_by_id = self.get_parameter('color_by_id').value
+        self.color_index = self.resolve_video_index(
+            self.color_by_id, self.color_index, 'color'
+        )
         self.width = int(self.get_parameter('width').value)
         self.height = int(self.get_parameter('height').value)
         self.fps = self.get_parameter('fps').value
@@ -139,6 +150,27 @@ class AstraRgbdCameraNode(Node):
 
     def is_capture_open(self, capture):
         return capture is not None and capture.isOpened()
+
+    def resolve_video_index(self, by_id_glob, fallback_index, label):
+        """Traduce el symlink estable /dev/v4l/by-id/<by_id_glob> al indice
+        /dev/videoN real. Devuelve fallback_index si no hay by-id o no coincide.
+        """
+        if not by_id_glob:
+            return fallback_index
+        for link in sorted(glob.glob(os.path.join('/dev/v4l/by-id', by_id_glob))):
+            target = os.path.realpath(link)
+            base = os.path.basename(target)
+            if base.startswith('video') and base[5:].isdigit():
+                index = int(base[5:])
+                self.get_logger().info(
+                    f'Astra {label} resuelta por by-id: {link} -> /dev/video{index}'
+                )
+                return index
+        self.get_logger().warn(
+            f'No se encontro camara Astra {label} por by-id "{by_id_glob}"; '
+            f'uso indice fijo {fallback_index}'
+        )
+        return fallback_index
 
     def open_capture(self, index, fourcc, label):
         if index is None or int(index) < 0:

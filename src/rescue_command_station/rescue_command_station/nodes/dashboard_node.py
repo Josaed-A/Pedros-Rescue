@@ -631,14 +631,16 @@ class ModernDashboardApp:
         self._legs_canvas.create_text(bx0 - 22, cy, text='ATRAS',
                                       fill=COLORS['muted'], font=(FONT, 7, 'bold'))
         self._leg_len = 34
-        # hip (x, y) y angulo base (canvas: x derecha, y abajo).
-        #   0   = hacia adelante (derecha)  -> patas delanteras
-        #   180 = hacia atras (izquierda)   -> patas traseras
+        # hip (x, y) y angulo base (canvas: x derecha, y abajo; -90 = arriba).
+        # Punto de calibracion/inicial (0deg): las patas quedan PERPENDICULARES
+        # al piso, apuntando hacia ARRIBA en Z (retraidas), no paradas sobre las
+        # cuatro. Por eso el reposo se dibuja hacia arriba (-90) para todas; el
+        # angulo acumulado las hace barrer desde esa referencia.
         self._leg_geom = {
-            'PataDelIzq':  (bx1 - 26, cy,   0.0),
-            'PataDelDer':  (bx1 - 12, cy,   0.0),
-            'PataTrasIzq': (bx0 + 26, cy, 180.0),
-            'PataTrasDer': (bx0 + 12, cy, 180.0),
+            'PataDelIzq':  (bx1 - 26, cy, -90.0),
+            'PataDelDer':  (bx1 - 12, cy, -90.0),
+            'PataTrasIzq': (bx0 + 26, cy, -90.0),
+            'PataTrasDer': (bx0 + 12, cy, -90.0),
         }
         self._leg_color = {
             'PataDelIzq':  COLORS['cyan'], 'PataDelDer':  COLORS['amber'],
@@ -946,6 +948,12 @@ else:
         instantaneo (solo mostrar/ocultar ventanas), sin relanzar nada."""
         if self._arm_proc is not None and self._arm_proc.poll() is None:
             return
+        # Garantiza UNA sola instancia: baja cualquier stack del brazo previo
+        # (colgado de una sesion anterior, un crash o un lanzamiento manual).
+        # Dos stacks publican en los mismos topics (/fk_points, /arm/joint_states)
+        # y la simulacion salta entre ambas soluciones, ademas de abrir dos
+        # ventanas de la GUI del brazo.
+        self._kill_stray_arm()
         try:
             self._arm_proc = subprocess.Popen(
                 ['ros2', 'launch', 'rescue_command_station', 'arm_station.launch.py'],
@@ -953,6 +961,19 @@ else:
             self.ros_node.get_logger().info('Precargando GUI del brazo (oculta)...')
         except Exception as e:
             self.ros_node.get_logger().error(f'No se pudo precargar el brazo: {e}')
+
+    def _kill_stray_arm(self):
+        """Baja cualquier stack del brazo (arm_station) que NO sea el nuestro:
+        launch supervisor + cinematica + cartesian + arm_gui. Evita duplicados
+        que se pelean los topics del brazo. Se llama justo ANTES de precargar,
+        cuando aun no hemos lanzado el nuestro."""
+        for pat in ('arm_station.launch', 'arm_gui_node',
+                    'cinematica_node', 'cartesian_node'):
+            try:
+                subprocess.run(['pkill', '-f', pat], check=False,
+                               stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            except Exception:
+                pass
 
     def _toggle_arm_visibility(self):
         """Flecha ABAJO / boton: alterna entre dashboard (movimiento) y brazo.

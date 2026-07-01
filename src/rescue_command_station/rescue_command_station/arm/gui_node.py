@@ -47,6 +47,9 @@ from rescue_interfaces.srv import (ComputeIK, ComputeIKPose, ServoCommand, Servo
 from rescue_interfaces.msg import CartesianWaypoint
 
 from rescue_command_station.control import config as cfg
+from rescue_command_station.arm.kinematics import (
+    rotx3 as _rotx3, roty3 as _roty3, rotz3 as _rotz3,
+)
 from rescue_command_station.vision.qr_detector import QrDetector
 from rescue_command_station.vision.ros_image import compressed_msg_to_numpy
 from rescue_command_station.vision.tk_image import bgr_frame_to_png_data
@@ -61,6 +64,12 @@ from mpl_toolkits.mplot3d import Axes3D  # noqa: F401 — registra la proyeccion
 
 ctk.set_appearance_mode('Dark')
 ctk.set_default_color_theme('blue')
+
+# Tamano FIJO de la imagen de la camara frontal (px). Fijo a proposito: si se
+# dimensiona al widget, el Label crece con la imagen y viceversa, y el video
+# "se actualiza de tamano" constantemente.
+CAM_IMG_W = 520
+CAM_IMG_H = 340
 
 # Defaults usados si no se pasan parametros desde YAML
 _DEFAULT_JOINT_ORDER = ['Base', 'Hombro', 'Codo', 'Munieca_P',
@@ -200,19 +209,6 @@ def quaternion_to_matrix(q) -> np.ndarray:
         [2.0*(x*y + z*w),       1.0 - 2.0*(x*x + z*z), 2.0*(y*z - x*w)],
         [2.0*(x*z - y*w),       2.0*(y*z + x*w),       1.0 - 2.0*(x*x + y*y)],
     ], dtype=float)
-
-
-def _rotx3(a: float) -> np.ndarray:
-    c, s = math.cos(a), math.sin(a)
-    return np.array([[1, 0, 0], [0, c, -s], [0, s, c]], float)
-
-def _roty3(a: float) -> np.ndarray:
-    c, s = math.cos(a), math.sin(a)
-    return np.array([[c, 0, s], [0, 1, 0], [-s, 0, c]], float)
-
-def _rotz3(a: float) -> np.ndarray:
-    c, s = math.cos(a), math.sin(a)
-    return np.array([[c, -s, 0], [s, c, 0], [0, 0, 1]], float)
 
 
 def _parse_points(msg: JointState) -> np.ndarray:
@@ -979,10 +975,12 @@ class App(ctk.CTk):
                 frame = None if n._cam_frame is None else n._cam_frame.copy()
                 self._drawn_cam_version = n._cam_version
             if frame is not None:
-                w = self.cam_label.winfo_width()
-                h = self.cam_label.winfo_height()
-                png = bgr_frame_to_png_data(frame, max_width=w if w > 10 else 520,
-                                            max_height=h if h > 10 else 280)
+                # Tamano FIJO: no leemos winfo del Label. Dimensionar la imagen
+                # al tamano del widget realimenta el layout (el Label crece con
+                # la imagen y la imagen con el Label) y el video "se actualiza de
+                # tamano" constantemente. Con una caja fija queda estable.
+                png = bgr_frame_to_png_data(frame, max_width=CAM_IMG_W,
+                                            max_height=CAM_IMG_H)
                 if png is not None:
                     self.cam_photo = tk.PhotoImage(data=png, format='png')
                     self.cam_label.configure(image=self.cam_photo, text='')
