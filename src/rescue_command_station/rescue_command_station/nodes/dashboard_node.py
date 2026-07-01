@@ -16,6 +16,7 @@ from rclpy.qos import QoSHistoryPolicy, QoSProfile, QoSReliabilityPolicy
 from sensor_msgs.msg import CompressedImage, Joy, JointState, PointCloud2
 from std_msgs.msg import Bool, Float32, String
 from std_srvs.srv import Trigger
+import tf2_ros
 
 from rescue_command_station.control import config as cfg
 
@@ -47,6 +48,7 @@ COLORS = {
 FONT = 'Segoe UI'
 
 TEAM_NAME  = 'SabanaHerons'
+COUNTRY    = 'Colombia'
 OUTPUT_DIR = '/workspace/maps'
 
 DET_TYPE_OPTIONS = ['ar_code', 'hazmat_sign', 'real_object']
@@ -142,6 +144,13 @@ class DashboardRosNode(Node):
         self._save_ply_client     = self.create_client(Trigger, '/save_pointcloud_ply')
         self._save_geotiff_client = self.create_client(Trigger, '/save_geotiff')
 
+        # Publisher para inyectar detecciones manuales al geotiff_writer
+        self._manual_det_pub = self.create_publisher(String, '/object_detections', 10)
+
+        # TF para obtener posición actual del robot en el mapa
+        self._tf_buf = tf2_ros.Buffer()
+        self._tf_listener = tf2_ros.TransformListener(self._tf_buf, self)
+
         # ── Patas (stick derecho) ─────────────────────────────────────
         # enabled: si una pata esta deshabilitada el joystick no la mueve
         # (permite controlar solo una). pos_deg: grados acumulados en vivo.
@@ -231,6 +240,16 @@ class DashboardRosNode(Node):
             return False, None, self.last_raspberry_source
         age = self.now_seconds() - self.last_raspberry_msg_time
         return age <= self.raspberry_timeout_seconds, age, self.last_raspberry_source
+
+    def get_robot_pose_map(self):
+        """Devuelve (x, y, z) del robot en el frame 'map', o None si el TF no está disponible."""
+        try:
+            t = self._tf_buf.lookup_transform('map', 'base_footprint', rclpy.time.Time())
+            return (t.transform.translation.x,
+                    t.transform.translation.y,
+                    t.transform.translation.z)
+        except Exception:
+            return None
 
     def _noop(self, _msg):
         self.mark_raspberry_seen(self.astra_depth_topic)
@@ -454,8 +473,7 @@ class ModernDashboardApp:
             'raspberry':    tk.StringVar(),
             'save_status':  tk.StringVar(value=''),
             'manual_count': tk.StringVar(value='0 detecciones manuales'),
-            'manual_type':  tk.StringVar(value=DET_TYPE_OPTIONS[0]),
-            'manual_camera': tk.StringVar(value='Astra'),
+            'quick_status': tk.StringVar(value=''),
         }
 
         self.build_ui()
@@ -814,61 +832,60 @@ class ModernDashboardApp:
         sb.pack(side='right', fill='y')
         self._tree_ids: list = []
 
-        # ── Deteccion manual ──────────────────────────────────────
+        # ── Marcado rápido de detecciones ─────────────────────────
         tk.Frame(panel, bg=COLORS['border'], height=1).pack(fill='x', pady=(10, 6))
 
-        tk.Label(panel, text='DETECCION MANUAL', bg=COLORS['surface'],
-                 fg=COLORS['cyan'], font=(FONT, 8, 'bold')).pack(anchor='w', pady=(0, 6))
+        tk.Label(panel, text='MARCAR DETECCION',
+                 bg=COLORS['surface'], fg=COLORS['cyan'],
+                 font=(FONT, 8, 'bold')).pack(anchor='w', pady=(0, 6))
 
-        cam_row = tk.Frame(panel, bg=COLORS['surface'])
-        cam_row.pack(fill='x', pady=(0, 4))
-        tk.Label(cam_row, text='Camara:', bg=COLORS['surface'], fg=COLORS['muted'],
-                 font=(FONT, 9), width=8, anchor='e').pack(side='left')
-        for cam in ('Logitech', 'Astra'):
-            tk.Radiobutton(cam_row, text=cam, variable=self.vars['manual_camera'],
-                           value=cam, bg=COLORS['surface'], fg=COLORS['text'],
-                           selectcolor=COLORS['surface_soft'],
-                           activebackground=COLORS['surface'],
-                           font=(FONT, 9)).pack(side='left', padx=(8, 0))
+        # Campo nombre / ID (Enter también lanza el último tipo seleccionado)
+        qname_row = tk.Frame(panel, bg=COLORS['surface'])
+        qname_row.pack(fill='x', pady=(0, 6))
+        tk.Label(qname_row, text='ID / Nombre:',
+                 bg=COLORS['surface'], fg=COLORS['muted'],
+                 font=(FONT, 9), anchor='w').pack(side='left')
+        self._quick_name_entry = tk.Entry(
+            qname_row, bg=COLORS['surface_high'], fg=COLORS['text'],
+            insertbackground=COLORS['text'], font=(FONT, 11), relief='flat', bd=4)
+        self._quick_name_entry.pack(side='left', fill='x', expand=True, padx=(8, 0))
 
-        type_row = tk.Frame(panel, bg=COLORS['surface'])
-        type_row.pack(fill='x', pady=(0, 4))
-        tk.Label(type_row, text='Tipo:', bg=COLORS['surface'], fg=COLORS['muted'],
-                 font=(FONT, 9), width=8, anchor='e').pack(side='left')
-        self._type_menu = tk.OptionMenu(type_row, self.vars['manual_type'], *DET_TYPE_OPTIONS)
-        self._type_menu.configure(bg=COLORS['surface_high'], fg=COLORS['text'],
-                                  activebackground=COLORS['surface_soft'],
-                                  font=(FONT, 9), bd=0, highlightthickness=0,
-                                  relief='flat', width=14)
-        self._type_menu['menu'].configure(bg=COLORS['surface_high'], fg=COLORS['text'])
-        self._type_menu.pack(side='left', padx=(6, 0), fill='x', expand=True)
+        # 3 botones coloreados — un clic = marca posición actual del robot
+        # Colores según spec RoboCup 2026: AR amarillo, Hazmat naranja, Objeto rojo
+        qbtn_row = tk.Frame(panel, bg=COLORS['surface'])
+        qbtn_row.pack(fill='x', pady=(0, 4))
+        _QDET = [
+            ('ar_code',     '#2d2500', '#ffc800', 'AR CODE'),
+            ('hazmat_sign', '#2d1200', '#ff641e', 'HAZMAT'),
+            ('real_object', '#200202', '#f00a0a', 'OBJETO'),
+        ]
+        for dtype, bg, fg, lbl in _QDET:
+            tk.Button(
+                qbtn_row, text=lbl,
+                bg=bg, fg=fg,
+                font=(FONT, 10, 'bold'), relief='flat', bd=0,
+                pady=12, cursor='hand2',
+                activebackground=COLORS['surface_soft'],
+                activeforeground=fg,
+                command=lambda t=dtype: self._on_quick_mark(t),
+            ).pack(side='left', fill='x', expand=True, padx=(0, 3))
 
-        name_row = tk.Frame(panel, bg=COLORS['surface'])
-        name_row.pack(fill='x', pady=(0, 8))
-        tk.Label(name_row, text='Nombre:', bg=COLORS['surface'], fg=COLORS['muted'],
-                 font=(FONT, 9), width=8, anchor='e').pack(side='left')
-        self._manual_name_entry = tk.Entry(
-            name_row, bg=COLORS['surface_high'], fg=COLORS['text'],
-            insertbackground=COLORS['text'], font=(FONT, 10), relief='flat', bd=4)
-        self._manual_name_entry.pack(side='left', padx=(6, 0), fill='x', expand=True)
-        self._manual_name_entry.bind('<Return>', lambda _e: self._on_add_manual())
-
-        btn_row = tk.Frame(panel, bg=COLORS['surface'])
-        btn_row.pack(fill='x')
-        tk.Button(btn_row, text='+ AGREGAR',
-                  bg=COLORS['surface_btn'], fg=COLORS['cyan'],
-                  font=(FONT, 10, 'bold'), relief='flat', bd=0,
-                  pady=10, cursor='hand2',
-                  command=self._on_add_manual).pack(side='left', fill='x', expand=True, padx=(0, 6))
-        tk.Button(btn_row, text='GUARDAR CSV',
-                  bg=COLORS['surface_btn'], fg=COLORS['amber'],
-                  font=(FONT, 10, 'bold'), relief='flat', bd=0,
-                  pady=10, cursor='hand2',
-                  command=self._on_save_manual_csv).pack(side='left', fill='x', expand=True)
+        # Estado del último marcado
+        self._quick_status_label = tk.Label(
+            panel, textvariable=self.vars['quick_status'],
+            bg=COLORS['surface'], fg=COLORS['muted'],
+            font=(FONT, 8), anchor='w', wraplength=420, justify='left')
+        self._quick_status_label.pack(fill='x', pady=(2, 2))
 
         tk.Label(panel, textvariable=self.vars['manual_count'],
                  bg=COLORS['surface'], fg=COLORS['muted'],
-                 font=(FONT, 8), anchor='w').pack(fill='x', pady=(6, 0))
+                 font=(FONT, 8), anchor='w').pack(fill='x')
+
+        tk.Button(panel, text='GUARDAR CSV MANUAL',
+                  bg=COLORS['surface_btn'], fg=COLORS['amber'],
+                  font=(FONT, 10, 'bold'), relief='flat', bd=0,
+                  pady=10, cursor='hand2',
+                  command=self._on_save_manual_csv).pack(fill='x', pady=(6, 0))
 
     # ─── Widget helpers ───────────────────────────────────────────────────
 
@@ -1211,56 +1228,98 @@ class ModernDashboardApp:
             tag    = '[M] ' if det.get('_manual') else ''
             self.det_tree.insert('', 'end', values=(hora, f'{tag}{tipo}', nombre))
 
-    # ─── Manual detections ────────────────────────────────────────────────
+    # ─── Marcado rápido de detecciones ───────────────────────────────────────
 
-    def _on_add_manual(self):
-        det_type = self.vars['manual_type'].get()
-        name     = self._manual_name_entry.get().strip()
-        camera   = self.vars['manual_camera'].get()
+    _QDET_PREFIX = {'ar_code': 'AR', 'hazmat_sign': 'HZ', 'real_object': 'OBJ'}
+    _QDET_LABEL  = {'ar_code': 'AR Code', 'hazmat_sign': 'Hazmat', 'real_object': 'Objeto'}
+    _QDET_COLOR  = {'ar_code': '#ffc800', 'hazmat_sign': '#ff641e', 'real_object': '#f00a0a'}
 
+    def _on_quick_mark(self, det_type: str):
+        name = self._quick_name_entry.get().strip()
         if not name:
-            messagebox.showwarning('Nombre vacio', 'Escribe un nombre para la deteccion')
-            return
+            count  = sum(1 for d in self.manual_detections if d['type'] == det_type)
+            prefix = self._QDET_PREFIX.get(det_type, 'X')
+            name   = f'{prefix}{count + 1}'
 
-        now    = datetime.datetime.now()
-        t_str  = now.strftime('%H:%M:%S')
+        pos = self.ros_node.get_robot_pose_map()
+        x, y, z = pos if pos else (0.0, 0.0, 0.0)
+
+        now   = datetime.datetime.now()
+        t_str = now.strftime('%H:%M:%S')
+
         record = {
             'detection': len(self.manual_detections) + 1,
-            'time': t_str,
-            'type': det_type,
-            'name': name,
-            'camera': camera,
-            'x': 0.0, 'y': 0.0, 'z': 0.0,
-            'robot': 'Pedro',
-            'mode': 'manual',
+            'time':   t_str,
+            'type':   det_type,
+            'name':   name,
+            'x': round(x, 4),
+            'y': round(y, 4),
+            'z': round(z, 4),
+            'robot':  'Pedro',
+            'mode':   'T',
         }
         self.manual_detections.append(record)
-        self.vars['manual_count'].set(f'{len(self.manual_detections)} detecciones manuales')
-        self._manual_name_entry.delete(0, 'end')
 
-        # Inject into shared detection log so it appears in the table
+        # Muestra en la tabla de detecciones
         self.ros_node.latest_detections.insert(0, {
-            'type': det_type, 'name': name,
-            'wx': 0.0, 'wy': 0.0,
-            '_manual': True, '_camera': camera,
-            '_time': t_str,
+            'type':    det_type,
+            'name':    name,
+            'wx':      x,
+            'wy':      y,
+            '_manual': True,
+            '_time':   t_str,
         })
 
+        # Publica al geotiff_writer para que aparezca en el mapa 2D
+        geo = String()
+        geo.data = json.dumps({'type': det_type, 'name': name, 'wx': x, 'wy': y})
+        self.ros_node._manual_det_pub.publish(geo)
+
+        # Limpia el campo nombre para la siguiente detección
+        self._quick_name_entry.delete(0, 'end')
+
+        # Feedback visual
+        pos_str = f'({x:.2f}, {y:.2f})' if pos else '(sin TF — posición en 0,0)'
+        label   = self._QDET_LABEL.get(det_type, det_type)
+        color   = self._QDET_COLOR.get(det_type, COLORS['green'])
+        self.vars['quick_status'].set(f'✓  {label}  "{name}"  @  {pos_str}')
+        self._quick_status_label.configure(fg=color)
+        self.vars['manual_count'].set(f'{len(self.manual_detections)} detecciones manuales')
+
     def _on_save_manual_csv(self):
-        if not self.manual_detections:
-            messagebox.showinfo('Sin datos', 'No hay detecciones manuales que guardar')
-            return
         out_dir = OUTPUT_DIR
         os.makedirs(out_dir, exist_ok=True)
-        ts   = datetime.datetime.now().strftime('%H-%M-%S')
+        now = datetime.datetime.now()
+        ts         = now.strftime('%H-%M-%S')
+        start_date = (self.mapping_start_time or now).strftime('%Y-%m-%d')
+        start_hms  = (self.mapping_start_time or now).strftime('%H:%M:%S')
         path = os.path.join(out_dir, f'RoboCup2026-{TEAM_NAME}-manual-{ts}-pois.csv')
-        fieldnames = ['detection', 'time', 'type', 'name', 'camera', 'x', 'y', 'z', 'robot', 'mode']
         try:
             with open(path, 'w', newline='') as f:
-                writer = csv.DictWriter(f, fieldnames=fieldnames)
-                writer.writeheader()
-                writer.writerows(self.manual_detections)
-            messagebox.showinfo('Guardado', f'CSV guardado en:\n{path}')
+                # Preamble obligatorio RoboCup 2026 (spec pág. 20)
+                f.write(f'"pois"\n')
+                f.write(f'"1.3"\n')
+                f.write(f'"{TEAM_NAME}"\n')
+                f.write(f'"{COUNTRY}"\n')
+                f.write(f'"{start_date}"\n')
+                f.write(f'"{start_hms}"\n')
+                f.write(f'"manual"\n')
+                f.write('\n')
+                writer = csv.writer(f, quoting=csv.QUOTE_NONNUMERIC)
+                writer.writerow(['detection', 'time', 'type', 'name',
+                                 'x', 'y', 'z', 'robot', 'mode'])
+                for det in self.manual_detections:
+                    writer.writerow([
+                        det['detection'], det['time'],
+                        det['type'],      det['name'],
+                        det['x'],         det['y'],    det['z'],
+                        det['robot'],     det['mode'],
+                    ])
+            n = len(self.manual_detections)
+            msg = f'CSV guardado ({n} detecciones):\n{path}'
+            if not self.manual_detections:
+                msg = f'CSV de cabecera guardado (sin detecciones):\n{path}'
+            messagebox.showinfo('Guardado', msg)
         except Exception as exc:
             messagebox.showerror('Error', f'No se pudo guardar:\n{exc}')
 

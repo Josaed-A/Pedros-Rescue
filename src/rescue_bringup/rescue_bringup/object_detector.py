@@ -101,11 +101,12 @@ class ObjectDetector(Node):
     def __init__(self):
         super().__init__('object_detector')
 
-        self.declare_parameter('output_dir',     '/root/maps')
-        self.declare_parameter('team_name',      'PedrosRescue')
+        self.declare_parameter('output_dir',     '/workspace/maps')
+        self.declare_parameter('team_name',      'SabanaHerons')
         self.declare_parameter('mission',        'M1')
+        self.declare_parameter('country',        'Colombia')
         self.declare_parameter('robot_name',     'Pedro')
-        self.declare_parameter('mode',           'teleop')
+        self.declare_parameter('mode',           'T')
         self.declare_parameter('yolo_model',     'yolov8n.pt')
         self.declare_parameter('hazmat_model',   '')
         self.declare_parameter('hazmat_conf',    0.40)
@@ -578,16 +579,19 @@ class ObjectDetector(Node):
         now = datetime.datetime.now()
         time_str = now.strftime('%H:%M:%S')
 
+        raw_mode = self.get_parameter('mode').value.lower()
+        mode_char = 'A' if raw_mode in ('a', 'autonomous') else 'T'
+
         record = {
             'detection': self._det_counter,
             'time':      time_str,
             'type':      det['type'],
             'name':      det['name'],
-            'x': round(x, 3),
-            'y': round(y, 3),
-            'z': round(z, 3),
+            'x': round(x, 4),
+            'y': round(y, 4),
+            'z': round(z, 4),
             'robot':     self.get_parameter('robot_name').value,
-            'mode':      self.get_parameter('mode').value,
+            'mode':      mode_char,
         }
         self._detections.append(record)
 
@@ -658,17 +662,11 @@ class ObjectDetector(Node):
     # ─── Exportación CSV ──────────────────────────────────────────
 
     def _on_save_csv(self, _req, resp: Trigger.Response) -> Trigger.Response:
-        if not self._detections:
-            resp.success = True
-            resp.message = 'Sin detecciones — nada que exportar'
-            return resp
-
         try:
             path = self._export_csv()
+            n = len(self._detections)
             resp.success = True
-            resp.message = (
-                f'CSV guardado → {path}  '
-                f'({len(self._detections)} detecciones)')
+            resp.message = f'CSV guardado → {path}  ({n} detecciones)'
             self.get_logger().info(resp.message)
         except Exception as exc:
             resp.success = False
@@ -677,24 +675,39 @@ class ObjectDetector(Node):
         return resp
 
     def _export_csv(self) -> str:
-        if self._start_time is not None:
-            ts = self._start_time.strftime('%H-%M-%S')
-        else:
-            ts = datetime.datetime.now().strftime('%H-%M-%S')
+        ref = self._start_time or datetime.datetime.now()
+        ts         = ref.strftime('%H-%M-%S')
+        start_date = ref.strftime('%Y-%m-%d')
+        start_hms  = ref.strftime('%H:%M:%S')
 
-        team  = self.get_parameter('team_name').value
-        miss  = self.get_parameter('mission').value
-        fname = f'RoboCup2026-{team}-{miss}-{ts}-pois.csv'
+        team    = self.get_parameter('team_name').value
+        country = self.get_parameter('country').value
+        miss    = self.get_parameter('mission').value
+        fname   = f'RoboCup2026-{team}-{miss}-{ts}-pois.csv'
         out_dir = self.get_parameter('output_dir').value
         os.makedirs(out_dir, exist_ok=True)
         filepath = os.path.join(out_dir, fname)
 
-        fieldnames = ['detection', 'time', 'type', 'name',
-                      'x', 'y', 'z', 'robot', 'mode']
         with open(filepath, 'w', newline='') as f:
-            writer = csv.DictWriter(f, fieldnames=fieldnames)
-            writer.writeheader()
-            writer.writerows(self._detections)
+            # Preamble obligatorio RoboCup 2026 (spec pág. 20)
+            f.write(f'"pois"\n')
+            f.write(f'"1.3"\n')
+            f.write(f'"{team}"\n')
+            f.write(f'"{country}"\n')
+            f.write(f'"{start_date}"\n')
+            f.write(f'"{start_hms}"\n')
+            f.write(f'"{miss}"\n')
+            f.write('\n')
+            writer = csv.writer(f, quoting=csv.QUOTE_NONNUMERIC)
+            writer.writerow(['detection', 'time', 'type', 'name',
+                             'x', 'y', 'z', 'robot', 'mode'])
+            for det in self._detections:
+                writer.writerow([
+                    det['detection'], det['time'],
+                    det['type'],      det['name'],
+                    det['x'],         det['y'],    det['z'],
+                    det['robot'],     det['mode'],
+                ])
 
         return filepath
 

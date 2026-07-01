@@ -124,8 +124,8 @@ class PointCloudAccumulator(Node):
     def __init__(self):
         super().__init__('pointcloud_accumulator')
 
-        self.declare_parameter('output_dir',  '/root/maps')
-        self.declare_parameter('team_name',   'PedrosRescue')
+        self.declare_parameter('output_dir',  '/workspace/maps')
+        self.declare_parameter('team_name',   'SabanaHerons')
         self.declare_parameter('mission',     'M1')
         self.declare_parameter('voxel_size',  0.03)   # 3 cm — balance precisión/memoria
         self.declare_parameter('max_range',   4.0)

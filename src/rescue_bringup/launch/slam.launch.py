@@ -219,9 +219,9 @@ def generate_launch_description():
                     'output_dir':  output_dir,
                     'team_name':   'SabanaHerons',
                     'mission':     'M1',
-                    'voxel_size':  0.02,
+                    'voxel_size':  0.025,
                     'max_range':   4.0,
-                    'min_range':   0.3,
+                    'min_range':   0.25,
                     'sample_rate': 3,
                 }],
             )
@@ -264,9 +264,10 @@ def generate_launch_description():
                 parameters=[{
                     'output_dir':    output_dir,
                     'team_name':     'SabanaHerons',
+                    'country':       'Colombia',
                     'mission':       'M1',
                     'robot_name':    'Pedro',
-                    'mode':          'teleop',
+                    'mode':          'T',
                     'yolo_model':    'yolov8n.pt',
                     'hazmat_model':  hazmat_model_path,
                     'hazmat_conf':   0.40,
@@ -337,7 +338,7 @@ def generate_launch_description():
         ),
         DeclareLaunchArgument(
             'output_dir',
-            default_value=PathJoinSubstitution([EnvironmentVariable('HOME'), 'maps']),
+            default_value='/workspace/maps',
             description='Directorio para GeoTIFF, PLY y CSV de mision',
         ),
         robot_description_launch,
