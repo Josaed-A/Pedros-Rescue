@@ -9,18 +9,25 @@ Lanza:
 Uso:
   ros2 launch rescue_bringup logitech_vision.launch.py
   ros2 launch rescue_bringup logitech_vision.launch.py device:=0
-  ros2 launch rescue_bringup logitech_vision.launch.py device:=2 hazmat_model:=/workspace/src/rescue_bringup/models/hazmat_yolo.pt
+  ros2 launch rescue_bringup logitech_vision.launch.py device:=2 hazmat_model:=/workspace/src/rescue_bringup/models/best.pt
 """
 
+import os
+
+from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument, TimerAction
 from launch.substitutions import EnvironmentVariable, LaunchConfiguration, PathJoinSubstitution
 from launch_ros.actions import Node
 
+# Modelo hazmat entrenado (YOLO26n, 49 clases) — se instala junto al paquete
+_DEFAULT_HAZMAT_MODEL = os.path.join(
+    get_package_share_directory('rescue_bringup'), 'models', 'best.pt')
+
 
 def generate_launch_description():
     device       = LaunchConfiguration('device',       default='2')
-    hazmat_model = LaunchConfiguration('hazmat_model', default='')
+    hazmat_model = LaunchConfiguration('hazmat_model', default=_DEFAULT_HAZMAT_MODEL)
     enable_yolo  = LaunchConfiguration('enable_yolo',  default='true')
     fps          = LaunchConfiguration('fps',           default='15')
     output_dir   = LaunchConfiguration('output_dir')
@@ -70,7 +77,8 @@ def generate_launch_description():
 
     return LaunchDescription([
         DeclareLaunchArgument('device',       default_value='2',  description='Índice /dev/videoN de la Logitech'),
-        DeclareLaunchArgument('hazmat_model', default_value='',   description='Ruta al .pt o .onnx. Vacío = HSV'),
+        DeclareLaunchArgument('hazmat_model', default_value=_DEFAULT_HAZMAT_MODEL,
+                               description='Ruta al .pt o .onnx del modelo hazmat. Vacío = HSV'),
         DeclareLaunchArgument('enable_yolo',  default_value='true', description='Habilitar YOLO COCO'),
         DeclareLaunchArgument('fps',          default_value='15', description='FPS de captura'),
         DeclareLaunchArgument(

@@ -10,7 +10,8 @@ Lanza:
   3. astra_camera_node   → /camera/depth/points
                            /camera/color/image_raw
   4. logitech_pub        → /robot/camera/front/image_raw/compressed
-  5. object_detector     → /object_detections  /camera/color/image_annotated/compressed
+  5. object_detector     → detección on-site (en la Pi) sobre la Logitech
+                           /object_detections  /camera/color/image_annotated/compressed
   6. servos (brazo)      → /ax12a/*, /ex106/*, /joint_states  (opcional)
 
 Uso:
@@ -40,9 +41,10 @@ def generate_launch_description():
     launch_lidar    = LaunchConfiguration('launch_lidar',    default='true')
     launch_logitech = LaunchConfiguration('launch_logitech', default='true')
     launch_servos   = LaunchConfiguration('launch_servos',   default='true')
-    hazmat_model    = LaunchConfiguration('hazmat_model',    default='')
 
     pkg_bringup = get_package_share_directory('rescue_bringup')
+    _default_hazmat_model = os.path.join(pkg_bringup, 'models', 'best.pt')
+    hazmat_model    = LaunchConfiguration('hazmat_model',    default=_default_hazmat_model)
 
     # ── 1. TF tree (robot description) ─────────────────────────────
     robot_description_launch = IncludeLaunchDescription(
@@ -88,7 +90,7 @@ def generate_launch_description():
         ],
     )
 
-    # ── 4. Logitech frontal (detector corre en el PC) ─────────────
+    # ── 4. Logitech frontal + object_detector (procesamiento on-site, en la Pi) ──
     logitech_launch = TimerAction(
         period=6.0,
         actions=[
@@ -101,7 +103,6 @@ def generate_launch_description():
                     'fps':              '30',
                     'hazmat_model':     hazmat_model,
                     'enable_yolo':      'true',
-                    'launch_detector':  'false',
                 }.items(),
                 condition=IfCondition(launch_logitech),
             )
@@ -157,7 +158,7 @@ def generate_launch_description():
         ),
         DeclareLaunchArgument(
             'hazmat_model',
-            default_value='',
+            default_value=_default_hazmat_model,
             description='Ruta al modelo YOLO hazmat (.pt). Vacío = HSV fallback',
         ),
         robot_description_launch,

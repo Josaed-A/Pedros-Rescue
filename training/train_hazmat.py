@@ -6,7 +6,7 @@ Uso:
     python3 training/train_hazmat.py [--epochs 50] [--model yolov8n.pt] [--imgsz 640]
 
 El modelo entrenado se guarda en:
-    src/rescue_bringup/models/hazmat_yolo.pt
+    src/rescue_bringup/models/best.pt
 """
 
 import argparse
@@ -16,7 +16,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).parent.parent
 DATA_YAML = ROOT / "datasets" / "hazmat" / "data.yaml"
-OUTPUT_MODEL = ROOT / "src" / "rescue_bringup" / "models" / "hazmat_yolo.pt"
+OUTPUT_MODEL = ROOT / "src" / "rescue_bringup" / "models" / "best.pt"
 
 
 def parse_args():

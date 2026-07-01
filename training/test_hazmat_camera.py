@@ -18,7 +18,7 @@ import cv2
 from ultralytics import YOLO
 
 ROOT  = Path(__file__).parent.parent
-MODEL = ROOT / 'src' / 'rescue_bringup' / 'models' / 'hazmat_yolo.pt'
+MODEL = ROOT / 'src' / 'rescue_bringup' / 'models' / 'best.pt'
 
 COLORS = [
     (0,165,255),(0,255,0),(255,80,0),(0,200,255),

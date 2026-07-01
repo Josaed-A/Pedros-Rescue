@@ -8,18 +8,18 @@ El modelo ONNX también funciona con OpenCV DNN (sin instalar ultralytics en la 
 
 Uso:
     python3 training/export_to_onnx.py
-    python3 training/export_to_onnx.py --model src/rescue_bringup/models/hazmat_yolo.pt
+    python3 training/export_to_onnx.py --model src/rescue_bringup/models/best.pt
 
 Salida:
-    src/rescue_bringup/models/hazmat_yolo.onnx
+    src/rescue_bringup/models/best.onnx
 """
 
 import argparse
 from pathlib import Path
 
 ROOT = Path(__file__).parent.parent
-DEFAULT_PT   = ROOT / 'src' / 'rescue_bringup' / 'models' / 'hazmat_yolo.pt'
-DEFAULT_ONNX = ROOT / 'src' / 'rescue_bringup' / 'models' / 'hazmat_yolo.onnx'
+DEFAULT_PT   = ROOT / 'src' / 'rescue_bringup' / 'models' / 'best.pt'
+DEFAULT_ONNX = ROOT / 'src' / 'rescue_bringup' / 'models' / 'best.onnx'
 
 
 def parse_args():
@@ -67,7 +67,7 @@ def main():
     print('Para usarlo en la Pi (sin ultralytics):')
     print('  pip3 install onnxruntime  # ~50MB, funciona en ARM')
     print('  # O con OpenCV DNN (ya instalado con cv2):')
-    print('  #   net = cv2.dnn.readNetFromONNX("hazmat_yolo.onnx")')
+    print('  #   net = cv2.dnn.readNetFromONNX("best.onnx")')
 
 
 if __name__ == '__main__':

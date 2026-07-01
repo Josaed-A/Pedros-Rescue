@@ -17,12 +17,17 @@ Uso:
 
   # Con modelo hazmat entrenado
   ros2 launch rescue_bringup vision.launch.py \\
-    hazmat_model:=/workspace/src/rescue_bringup/models/hazmat_yolo.pt
+    hazmat_model:=/workspace/src/rescue_bringup/models/best.pt
 
   # Pi: driver compañero + sin YOLO COCO (más ligero) + modelo ONNX
   ros2 launch rescue_bringup vision.launch.py \\
     camera_driver:=astra_core enable_yolo:=false \\
-    hazmat_model:=/workspace/src/rescue_bringup/models/hazmat_yolo.onnx
+    hazmat_model:=/workspace/src/rescue_bringup/models/best.onnx
+
+NOTA: la detección de producción ahora corre on-site en la Pi vía
+logitech_vision.launch.py (incluido desde pi_sensors.launch.py), usando la
+cámara Logitech en vez de la Astra. Este launch se mantiene para pruebas
+standalone con la Astra.
 """
 
 import os

@@ -142,7 +142,7 @@ case "${1:-shell}" in
         # Logitech + object_detector (sin depth: detecta pero no localiza en 3D)
         # Uso: ./scripts/run_slam_container.sh logitech-vision [device=2]
         CAM_DEVICE="${2:-2}"
-        HAZMAT_MODEL="/workspace/src/rescue_bringup/models/hazmat_yolo.pt"
+        HAZMAT_MODEL="/workspace/src/rescue_bringup/models/best.pt"
         CMD="source /opt/ros/jazzy/setup.bash && \
              source /workspace/install/setup.bash && \
              echo '━━━ Logitech Vision (device=${CAM_DEVICE}) ━━━' && \
@@ -163,7 +163,7 @@ case "${1:-shell}" in
 
     vision)
         # Cámara Orbbec + object_detector completo (AprilTag + hazmat YOLO + objetos)
-        HAZMAT_MODEL="/workspace/src/rescue_bringup/models/hazmat_yolo.pt"
+        HAZMAT_MODEL="/workspace/src/rescue_bringup/models/best.pt"
         CMD="source /opt/ros/jazzy/setup.bash && \
              source /workspace/install/setup.bash && \
              echo '━━━ Lanzando módulo de visión ━━━' && \
