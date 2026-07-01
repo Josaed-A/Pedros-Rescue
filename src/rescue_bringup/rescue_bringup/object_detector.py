@@ -35,6 +35,7 @@ from typing import Dict, List, Optional, Tuple
 import numpy as np
 import rclpy
 from rclpy.node import Node
+from rclpy.qos import QoSHistoryPolicy, QoSProfile, QoSReliabilityPolicy
 from sensor_msgs.msg import Image, CameraInfo, CompressedImage
 from std_msgs.msg import String as StringMsg
 from std_srvs.srv import Trigger

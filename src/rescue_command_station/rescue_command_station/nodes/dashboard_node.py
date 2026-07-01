@@ -740,12 +740,12 @@ class ModernDashboardApp:
         tk.Frame(panel, bg=COLORS['border'], height=1).pack(fill='x', pady=(10, 8))
 
         self.btn_save_all = tk.Button(
-            panel, text='GUARDAR MISION',
-            bg=COLORS['surface_high'], fg=COLORS['muted'],
+            panel, text='GUARDAR MAPAS 2D/3D',
+            bg=COLORS['amber_bg'], fg=COLORS['amber'],
             font=(FONT, 12, 'bold'), relief='flat', bd=0,
             pady=14, cursor='hand2',
             activebackground=COLORS['green_bg'], activeforeground=COLORS['green'],
-            state='disabled', command=self._on_save_all_robocup)
+            state='normal', command=self._on_save_all_robocup)
         self.btn_save_all.pack(fill='x')
 
         self._save_status_label = tk.Label(
@@ -1069,6 +1069,7 @@ class ModernDashboardApp:
                                 bg=COLORS['amber_bg'])
         self.btn_save_all.configure(
             state='normal',
+            text='GUARDAR MAPAS 2D/3D',
             fg=COLORS['green'], bg=COLORS['green_bg'])
         self.vars['save_status'].set('')
 
@@ -1080,7 +1081,7 @@ class ModernDashboardApp:
                                 bg=COLORS['surface_high'])
         self.btn_save_all.configure(
             state='normal',
-            text='GUARDAR MISION ROBOCUP',
+            text='GUARDAR MAPAS 2D/3D',
             fg=COLORS['amber'], bg=COLORS['amber_bg'])
 
     def _update_mission_indicator(self):
@@ -1108,19 +1109,18 @@ class ModernDashboardApp:
         self._save_status_label.configure(fg=color)
 
     def _on_save_all_robocup(self):
-        """Call CSV + PLY + TIFF services simultaneously, then open the output folder."""
+        """Guarda el mapa 2D GeoTIFF y la nube 3D PLY con el mismo boton."""
         self._robocup_results  = {}
-        self._robocup_expected = {'CSV', 'PLY', 'TIFF'}
-        self.vars['save_status'].set('Guardando CSV + PLY + TIFF...')
+        self._robocup_expected = {'GeoTIFF 2D', 'PLY 3D'}
+        self.vars['save_status'].set('Guardando GeoTIFF 2D + PLY 3D...')
         self._save_status_label.configure(fg=COLORS['muted'])
         self.btn_save_all.configure(state='disabled',
                                     text='Guardando...', fg=COLORS['muted'],
                                     bg=COLORS['surface_high'])
 
         services = [
-            (self.ros_node._save_csv_client,     'CSV'),
-            (self.ros_node._save_ply_client,     'PLY'),
-            (self.ros_node._save_geotiff_client, 'TIFF'),
+            (self.ros_node._save_geotiff_client, 'GeoTIFF 2D'),
+            (self.ros_node._save_ply_client,     'PLY 3D'),
         ]
         for client, name in services:
             if not client.service_is_ready():
@@ -1141,22 +1141,18 @@ class ModernDashboardApp:
             self._on_robocup_all_done()
 
     def _on_robocup_all_done(self):
-        label = 'GUARDAR MISION ROBOCUP'
+        label = 'GUARDAR MAPAS 2D/3D'
         self.btn_save_all.configure(state='normal', text=label)
         all_ok = all(v[0] for v in self._robocup_results.values())
         if all_ok:
             self.vars['save_status'].set(
-                f'Guardado en {OUTPUT_DIR} · abriendo carpeta...')
+                'Mapas guardados: GeoTIFF 2D + PLY 3D')
             self._save_status_label.configure(fg=COLORS['green'])
             self.btn_save_all.configure(fg=COLORS['green'], bg=COLORS['green_bg'])
-            try:
-                subprocess.Popen(['xdg-open', OUTPUT_DIR])
-            except Exception:
-                pass
         else:
             bad = [n for n, (ok, _) in self._robocup_results.items() if not ok]
             self.vars['save_status'].set(
-                f'Error en: {", ".join(bad)} — inicia la mision primero')
+                f'Error en: {", ".join(bad)} — revisa que SLAM y la nube 3D esten activos')
             self._save_status_label.configure(fg=COLORS['red'])
             self.btn_save_all.configure(fg=COLORS['amber'], bg=COLORS['amber_bg'])
 

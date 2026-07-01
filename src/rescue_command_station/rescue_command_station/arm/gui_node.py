@@ -320,7 +320,7 @@ class GUINode(Node):
         self._req_active = False        # ultimo /arm_active recibido
         self._submode_step = 0          # pasos L1/R1 pendientes de aplicar
         self._prev_buttons: list = []
-        self._joy_axes: list = []       # ultimos ejes del mando (teleop cartesiano)
+        self._joy_axes: list = []       # ultimos ejes del mando (jog manual por servo)
         self._bus_reset_flag = False    # el dashboard pidio reiniciar los buses
         self.create_subscription(Bool, '/arm_active', self._cb_arm_active, 10)
         self.create_subscription(Joy, '/joy', self._cb_joy, 10)
@@ -355,8 +355,9 @@ class GUINode(Node):
             self._bus_reset_flag = True
 
     def _cb_joy(self, msg):
-        """L1/R1 → alternar submodos (tabs). Ejes → teleop cartesiano (los lee
-        la App). Solo con el brazo al frente."""
+        """L1/R1 → alternar submodos (tabs), salvo en la pestana 'Jog' donde
+        jogean el servo Base. Ejes → jog manual por servo (los lee la App).
+        Solo con el brazo al frente."""
         if not self._req_active:
             self._prev_buttons = list(msg.buttons)
             self._joy_axes = []
@@ -727,7 +728,8 @@ class GUINode(Node):
         cli.call_async(req).add_done_callback(_done)
 
     def pedir_ik_pose(self, p, R, elbow, on_result):
-        """IK desde una pose completa (R 3x3, p 3). Para teleoperacion cartesiana."""
+        """IK desde una pose completa (R 3x3, p 3). Para movimiento cartesiano
+        y rotacion desde la pestana IK."""
         cli = self._cli.get('compute_ik_pose')
         if cli is None or not cli.service_is_ready():
             on_result(False, [], '/compute_ik_pose no disponible')
@@ -842,15 +844,6 @@ class App(ctk.CTk):
         self._cart_delta_buttons: list[ctk.CTkButton] = []
         self._drawn_pts_version = -1
 
-        # Teleoperacion cartesiana: pose objetivo acumulada (R 3x3, p 3)
-        self._tp_R              : np.ndarray | None = None
-        self._tp_p              : np.ndarray | None = None
-        self._stab_R            : np.ndarray | None = None   # R fija para estabilizacion
-        self._pending_teleop_q  : list | None  = None
-        self._pending_teleop_msg: tuple | None = None
-        self._pending_teleop_commit: tuple | None = None
-        self._joy_ik_inflight    = False   # 1 sola peticion IK por joystick a la vez
-        self._joy_inflight_ticks = 0       # timeout de seguridad si la IK no responde
         self._bus_reset_ticks    = 0       # ticks restantes del banner de reinicio de buses
 
         # Jog manual por servo con el mando (pestana 'Jog')
@@ -959,13 +952,12 @@ class App(ctk.CTk):
         # ── Pestanas de control (submodos; se ciclan con L1/R1) ────
         self.tabs = ctk.CTkTabview(left)
         self.tabs.grid(row=3, column=0, sticky='nsew', padx=8, pady=4)
-        self._tab_order = ['Mover', 'Teleop', 'Jog', 'IK', 'Calibrar',
+        self._tab_order = ['Mover', 'Jog', 'IK', 'Calibrar',
                            'Rescate', 'Estado']
         for name in self._tab_order:
             self.tabs.add(name)
 
         self._build_tab_fk(self.tabs.tab('Mover'))
-        self._build_tab_teleop(self.tabs.tab('Teleop'))
         self._build_tab_jog(self.tabs.tab('Jog'))
         self._build_tab_ik(self.tabs.tab('IK'))
         self._build_tab_calib(self.tabs.tab('Calibrar'))
@@ -1047,330 +1039,6 @@ class App(ctk.CTk):
             fg_color='#1a5276', hover_color='#154360',
             height=40, state='disabled', command=self._home)
         self.btn_home.pack(fill='x', pady=4)
-
-    # ── Tab Teleop: control cartesiano en ejes de la camara ───────
-
-    def _build_tab_teleop(self, tab):
-        frame = ctk.CTkScrollableFrame(tab, fg_color='transparent')
-        frame.pack(fill='both', expand=True)
-
-        ctk.CTkLabel(frame, text='Teleoperacion de camara (ejes locales)',
-                     font=('Roboto', 13, 'bold')).pack(pady=(4, 2))
-
-        # Indicador de joystick: se ilumina (verde) cuando esta moviendo el brazo.
-        self.lbl_joy_state = ctk.CTkLabel(
-            frame, text='● Joystick:  Izq → X/Y   Gatillos → Z   Der → rotacion',
-            font=('Roboto', 12, 'bold'), text_color=COL['muted'],
-            fg_color=COL['surface'], corner_radius=6, height=30)
-        self.lbl_joy_state.pack(fill='x', padx=6, pady=(2, 6))
-
-        # Selector de modo
-        self.var_teleop_mode = ctk.StringVar(value='Translacion')
-        ctk.CTkSegmentedButton(
-            frame, values=['Translacion', 'Orientacion'],
-            variable=self.var_teleop_mode,
-            command=self._teleop_switch_mode).pack(fill='x', padx=6, pady=4)
-
-        # Pasos
-        step_row = ctk.CTkFrame(frame, fg_color='transparent')
-        step_row.pack(fill='x', padx=4, pady=2)
-        ctk.CTkLabel(step_row, text='Paso lineal (m):').pack(side='left')
-        self.entry_tp_lin = ctk.CTkEntry(step_row, width=58)
-        self.entry_tp_lin.insert(0, '0.01')
-        self.entry_tp_lin.pack(side='left', padx=4)
-        ctk.CTkLabel(step_row, text='angular (°):').pack(side='left', padx=(10, 0))
-        self.entry_tp_ang = ctk.CTkEntry(step_row, width=52)
-        self.entry_tp_ang.insert(0, '5')
-        self.entry_tp_ang.pack(side='left', padx=4)
-
-        # ── Estabilizacion de orientacion ─────────────────────────────
-        fr_stab = ctk.CTkFrame(frame, fg_color='transparent')
-        fr_stab.pack(fill='x', padx=4, pady=(4, 2))
-        self.var_stab = ctk.BooleanVar(value=False)
-        self.chk_stab = ctk.CTkCheckBox(
-            fr_stab, text='Estabilizar orientacion de camara',
-            variable=self.var_stab, command=self._teleop_toggle_stab)
-        self.chk_stab.pack(side='left')
-        self.lbl_stab_estado = ctk.CTkLabel(
-            fr_stab, text='', font=('Roboto', 11), text_color=COL['ok'])
-        self.lbl_stab_estado.pack(side='left', padx=8)
-
-        # Botones de translacion de la PUNTA (efector final) en linea recta
-        self._tp_frame_trans = ctk.CTkFrame(frame, fg_color='transparent')
-
-        # Marco de referencia: Mundo (base) = lineas rectas X/Y/Z fijas;
-        # Camara = ejes locales de la punta (seguir la orientacion actual).
-        self.var_tp_frame = ctk.StringVar(value='Camara')
-        fr_sel = ctk.CTkFrame(self._tp_frame_trans, fg_color='transparent')
-        fr_sel.pack(fill='x', pady=(0, 4))
-        ctk.CTkLabel(fr_sel, text='Ejes:').pack(side='left', padx=(2, 4))
-        ctk.CTkSegmentedButton(
-            fr_sel, values=['Mundo', 'Camara'],
-            variable=self.var_tp_frame).pack(side='left', fill='x', expand=True)
-
-        btn_grid = ctk.CTkFrame(self._tp_frame_trans, fg_color='transparent')
-        btn_grid.pack(fill='x')
-        btn_grid.grid_columnconfigure((0, 1), weight=1)
-        self._tp_trans_btns: list[ctk.CTkButton] = []
-        trans = [('Adelante (+X)', 0, +1), ('Atras (-X)', 0, -1),
-                 ('Izquierda (+Y)', 1, +1), ('Derecha (-Y)', 1, -1),
-                 ('Subir (+Z)', 2, +1), ('Bajar (-Z)', 2, -1)]
-        for i, (txt, axis, sign) in enumerate(trans):
-            b = ctk.CTkButton(
-                btn_grid, text=txt, state='disabled',
-                command=lambda a=axis, s=sign: self._teleop_translate(a, s))
-            b.grid(row=i // 2, column=i % 2, sticky='ew', padx=3, pady=3)
-            self._tp_trans_btns.append(b)
-
-        # Botones de orientacion (incremento en el frame de la camara)
-        self._tp_frame_orient = ctk.CTkFrame(frame, fg_color='transparent')
-        self._tp_frame_orient.grid_columnconfigure((0, 1), weight=1)
-        self._tp_orient_btns: list[ctk.CTkButton] = []
-        orient = [('Pitch +', 1, +1), ('Pitch -', 1, -1),   # eje local Y
-                  ('Yaw +',   2, +1), ('Yaw -',   2, -1),    # eje local Z
-                  ('Roll +',  0, +1), ('Roll -',  0, -1)]    # eje local X
-        for i, (txt, axis, sign) in enumerate(orient):
-            b = ctk.CTkButton(
-                self._tp_frame_orient, text=txt, state='disabled',
-                command=lambda a=axis, s=sign: self._teleop_rotate(a, s))
-            b.grid(row=i // 2, column=i % 2, sticky='ew', padx=3, pady=3)
-            self._tp_orient_btns.append(b)
-
-        self._tp_frame_trans.pack(fill='x', padx=4, pady=4)  # modo por defecto
-
-        # ── Speed scale ───────────────────────────────────────────────
-        fr_speed = ctk.CTkFrame(frame, fg_color='transparent')
-        fr_speed.pack(fill='x', padx=4, pady=(8, 2))
-        ctk.CTkLabel(fr_speed, text='Velocidad tray.:',
-                     font=('Roboto', 11, 'bold')).pack(side='left')
-        self.lbl_speed_val = ctk.CTkLabel(fr_speed, text='100%',
-                                          width=42, font=('Roboto', 11),
-                                          text_color=COL['accent'])
-        self.lbl_speed_val.pack(side='right', padx=4)
-        self.sld_speed = ctk.CTkSlider(
-            frame, from_=5, to=100, number_of_steps=19,
-            command=self._on_speed_change)
-        self.sld_speed.set(100)
-        self.sld_speed.pack(fill='x', padx=4, pady=(0, 6))
-
-        self.btn_tp_sync = ctk.CTkButton(
-            frame, text='Sincronizar con pose actual', fg_color='#5d6d7e',
-            hover_color='#34495e', state='disabled', command=self._teleop_sync)
-        self.btn_tp_sync.pack(fill='x', padx=4, pady=(6, 2))
-
-        self.lbl_tp_pose = ctk.CTkLabel(frame, text='objetivo: —',
-                                        text_color=COL['accent'],
-                                        font=('Roboto', 11))
-        self.lbl_tp_pose.pack(pady=2)
-        self.lbl_tp_msg = ctk.CTkLabel(frame, text='', text_color=COL['warn'],
-                                       wraplength=360)
-        self.lbl_tp_msg.pack(pady=2)
-
-    # ── Speed scale ───────────────────────────────────────────────
-
-    def _on_speed_change(self, value):
-        pct = float(value)
-        self.lbl_speed_val.configure(text=f'{pct:.0f}%')
-        self._node.publicar_speed_scale(pct)
-
-    # ── Logica de teleoperacion ───────────────────────────────────
-
-    def _teleop_switch_mode(self, _value=None):
-        if self.var_teleop_mode.get() == 'Translacion':
-            self._tp_frame_orient.pack_forget()
-            self._tp_frame_trans.pack(fill='x', padx=4, pady=4)
-        else:
-            self._tp_frame_trans.pack_forget()
-            self._tp_frame_orient.pack(fill='x', padx=4, pady=4)
-
-    def _tp_lin_step(self) -> float:
-        try:    return max(0.001, min(0.10, float(self.entry_tp_lin.get())))
-        except ValueError: return 0.01
-
-    def _tp_ang_step(self) -> float:
-        try:    return max(0.5, min(30.0, float(self.entry_tp_ang.get())))
-        except ValueError: return 5.0
-
-    def _update_tp_label(self):
-        if self._tp_p is None:
-            return
-        p = self._tp_p
-        txt = f'objetivo  x {p[0]:+.3f}  y {p[1]:+.3f}  z {p[2]:+.3f} m'
-        if self._tp_R is not None:
-            R = self._tp_R
-            pitch = math.degrees(-math.asin(max(-1.0, min(1.0, R[2, 0]))))
-            roll  = math.degrees(math.atan2(R[2, 1], R[2, 2]))
-            yaw   = math.degrees(math.atan2(R[1, 0], R[0, 0]))
-            txt += f'\norient  R {roll:+.0f}  P {pitch:+.0f}  Y {yaw:+.0f}°'
-        self.lbl_tp_pose.configure(text=txt)
-
-    def _teleop_toggle_stab(self):
-        """Activa/desactiva estabilizacion de orientacion de la camara."""
-        if self.var_stab.get():
-            pose = self._node.pose_actual
-            if pose is None:
-                self.var_stab.set(False)
-                self.lbl_tp_msg.configure(
-                    text='Sin pose actual para estabilizar.',
-                    text_color=COL['err'])
-                return
-            self._stab_R = quaternion_to_matrix(pose.pose.orientation)
-            self.lbl_stab_estado.configure(text='R bloqueada')
-            self.lbl_tp_msg.configure(
-                text='Estabilizacion activa: orientacion fija al mundo.',
-                text_color=COL['ok'])
-        else:
-            self._stab_R = None
-            self.lbl_stab_estado.configure(text='')
-            self.lbl_tp_msg.configure(
-                text='Estabilizacion desactivada.',
-                text_color=COL['muted'])
-
-    def _teleop_sync(self) -> bool:
-        """Siembra la pose objetivo desde la pose real actual del efector."""
-        pose = self._node.pose_actual
-        if pose is None:
-            self.lbl_tp_msg.configure(text='Aun no hay pose actual.',
-                                      text_color=COL['warn'])
-            return False
-        p = pose.pose.position
-        self._tp_p = np.array([p.x, p.y, p.z], float)
-        # Con estabilizacion activa, no se toca la R bloqueada
-        if not self.var_stab.get():
-            self._tp_R = quaternion_to_matrix(pose.pose.orientation)
-        self._update_tp_label()
-        self.lbl_tp_msg.configure(text='Pose objetivo sincronizada.',
-                                  text_color=COL['ok'])
-        return True
-
-    def _teleop_ensure_seed(self) -> bool:
-        if self._tp_R is not None and self._tp_p is not None:
-            return True
-        return self._teleop_sync()
-
-    def _teleop_translate(self, axis: int, sign: int):
-        """Mueve la PUNTA en linea recta sobre un eje, manteniendo la orientacion.
-
-        Marco 'Mundo': eje fijo de la base (X/Y/Z), p.ej. -Z baja siempre recto.
-        Marco 'Camara': eje local de la punta (sigue la orientacion actual).
-        La IK recalcula las demas articulaciones para mantener la punta en la
-        recta; R se mantiene fija para que sea translacion pura.
-        """
-        if not self._teleop_ensure_seed():
-            return
-        step = sign * self._tp_lin_step()
-        if self.var_tp_frame.get() == 'Camara':
-            direccion = self._tp_R[:, axis]        # eje local de la punta
-        else:
-            direccion = np.eye(3)[:, axis]         # eje del mundo (base)
-        p_new = self._tp_p + step * direccion
-        self._teleop_send(p_new, self._tp_R)
-
-    def _teleop_rotate(self, axis: int, sign: int):
-        """Modo Orientacion: R_new = R · R_inc (incremento en frame local), p fija."""
-        if not self._teleop_ensure_seed():
-            return
-        ang   = math.radians(sign * self._tp_ang_step())
-        Rloc  = (_rotx3, _roty3, _rotz3)[axis](ang)
-        R_new = self._tp_R @ Rloc
-        self._teleop_send(self._tp_p, R_new)
-
-    def _teleop_send(self, p_new, R_new):
-        """Arma Td=[R|p] y resuelve via IK. Solo confirma el objetivo si la IK lo alcanza."""
-        # Con estabilizacion activa, la orientacion siempre es la R bloqueada.
-        # Las rotaciones manuales actualizan _stab_R para poder reorientar
-        # intencionalmente mientras se mantiene la estabilizacion.
-        if self.var_stab.get() and self._stab_R is not None:
-            R_send = self._stab_R
-            if not np.allclose(R_new, self._tp_R if self._tp_R is not None else R_new):
-                self._stab_R = R_new   # rotacion intencional → actualiza R fija
-                R_send = R_new
-        else:
-            R_send = R_new
-        elbow = getattr(self, 'var_elbow', None)
-        elbow = elbow.get() if elbow is not None else 'down'
-        self.lbl_tp_msg.configure(text='Calculando IK...', text_color=COL['warn'])
-
-        def _cb(ok, q_rad, msg):
-            if ok:
-                self._pending_teleop_commit = (p_new, R_send)
-                self._pending_teleop_q      = q_rad
-                self._pending_teleop_msg    = ('Objetivo alcanzado', COL['ok'])
-            else:
-                self._pending_teleop_q   = None
-                self._pending_teleop_msg = (f'No alcanzable: {msg}', COL['err'])
-
-        self._node.pedir_ik_pose(p_new, R_send, elbow, _cb)
-
-    def _joystick_teleop_step(self):
-        """Teleop cartesiano con el mando (pestana Teleop, brazo al frente).
-        SIEMPRE en ejes de la CAMARA (locales a la punta) y combina traslacion
-        + orientacion en una sola IK:
-          - stick IZQUIERDO → traslacion X / Y
-          - gatillos L2/R2  → traslacion Z (R2 acerca/aleja segun signo)
-          - stick DERECHO   → rotacion (yaw / pitch)
-        Mientras mantengas el stick, se va desplazando (1 paso por ciclo).
-        Manda 1 sola peticion IK a la vez."""
-        axes = self._node._joy_axes
-        dz = cfg.ARM_DEADZONE
-
-        def ax(i):
-            v = axes[i] if (axes and i < len(axes)) else 0.0
-            return v if abs(v) > dz else 0.0
-
-        def trig(i):                    # gatillo: reposo +1, presionado -1 → 0..1
-            v = axes[i] if (axes and i < len(axes)) else 1.0
-            return max(0.0, (1.0 - v) / 2.0)
-
-        # Stick IZQUIERDO → X/Y ;  gatillos → Z ;  stick DERECHO → rotacion
-        tx = ax(cfg.AXIS_LEFT_X)
-        ty = ax(cfg.AXIS_LEFT_Y)
-        tz = trig(cfg.AXIS_R2) - trig(cfg.AXIS_L2)
-        ryaw   = ax(cfg.AXIS_RIGHT_X)
-        rpitch = ax(cfg.AXIS_RIGHT_Y)
-
-        active = bool(tx or ty or tz or ryaw or rpitch)
-        self._set_joy_indicator(active)
-        if not active:
-            return
-
-        # 1 sola IK a la vez (con timeout de seguridad si no responde)
-        if self._joy_ik_inflight:
-            self._joy_inflight_ticks += 1
-            if self._joy_inflight_ticks < 16:   # ~2 s a 120 ms/loop
-                return
-            self._joy_ik_inflight = False
-        if not self._teleop_ensure_seed():
-            return
-
-        # Traslacion en ejes de la CAMARA (columnas de R = ejes locales de la punta)
-        lin = self._tp_lin_step()
-        basis = self._tp_R
-        # stick Y suele venir invertido (arriba = -1)
-        dp = lin * (tx * basis[:, 0] - ty * basis[:, 1] + tz * basis[:, 2])
-        p_new = self._tp_p + dp
-
-        # Orientacion: incremento en el frame local de la punta
-        ang = math.radians(self._tp_ang_step())
-        R_new = self._tp_R @ _rotz3(ryaw * ang) @ _roty3(-rpitch * ang)
-
-        self._joy_ik_inflight = True
-        self._joy_inflight_ticks = 0
-        self._teleop_send(p_new, R_new)
-
-    def _set_joy_indicator(self, active):
-        """Ilumina (verde) el indicador del teleop cuando el mando mueve el brazo."""
-        if getattr(self, '_joy_ind_on', None) == active:
-            return
-        self._joy_ind_on = active
-        if active:
-            self.lbl_joy_state.configure(
-                text='● MOVIENDO  —  Izq X/Y · Gatillos Z · Der rotacion',
-                text_color=COL['panel_bg'], fg_color=COL['ok'])
-        else:
-            self.lbl_joy_state.configure(
-                text='● Joystick:  Izq → X/Y   Gatillos → Z   Der → rotacion',
-                text_color=COL['muted'], fg_color=COL['surface'])
 
     # ── Tab Jog: mueve cada servo individualmente con el mando ─────
     #   L1/R1        -> Base        (paso por pulsacion)
@@ -1536,15 +1204,6 @@ class App(ctk.CTk):
             e = self._row_entry(frame, lbl_t, val, lw=80)
             self._ik_ent.append(e)
 
-        elbow_row = ctk.CTkFrame(frame, fg_color='transparent')
-        elbow_row.pack(fill='x', padx=4, pady=2)
-        ctk.CTkLabel(elbow_row, text='Codo:').pack(side='left')
-        self.var_elbow = ctk.StringVar(value='down')
-        ctk.CTkRadioButton(elbow_row, text='Abajo', variable=self.var_elbow,
-                           value='down').pack(side='left', padx=8)
-        ctk.CTkRadioButton(elbow_row, text='Arriba', variable=self.var_elbow,
-                           value='up').pack(side='left')
-
         step_row = ctk.CTkFrame(frame, fg_color='transparent')
         step_row.pack(fill='x', padx=4, pady=2)
         ctk.CTkLabel(step_row, text='Paso (m):').pack(side='left')
@@ -1579,6 +1238,8 @@ class App(ctk.CTk):
             state='disabled', command=self._copy_current_pose_to_ik)
         self.btn_use_pose.pack(side='left', padx=6)
 
+        ctk.CTkLabel(frame, text='Translacion (mundo, orientacion fija):',
+                     text_color=COL['muted']).pack(pady=(4, 0))
         cart_btn_row = ctk.CTkFrame(frame, fg_color='transparent')
         cart_btn_row.pack(pady=4)
         for text, delta in [
@@ -1589,6 +1250,28 @@ class App(ctk.CTk):
             btn = ctk.CTkButton(
                 cart_btn_row, text=text, width=48, state='disabled',
                 command=lambda d=delta: self._move_cart_delta(*d))
+            btn.pack(side='left', padx=2)
+            self._cart_delta_buttons.append(btn)
+
+        rot_step_row = ctk.CTkFrame(frame, fg_color='transparent')
+        rot_step_row.pack(fill='x', padx=4, pady=(4, 0))
+        ctk.CTkLabel(rot_step_row, text='Paso rot. (°):').pack(side='left')
+        self.entry_rot_step = ctk.CTkEntry(rot_step_row, width=54)
+        self.entry_rot_step.insert(0, '5')
+        self.entry_rot_step.pack(side='left', padx=6)
+
+        ctk.CTkLabel(frame, text='Rotacion (herramienta, posicion fija):',
+                     text_color=COL['muted']).pack(pady=(6, 0))
+        rot_btn_row = ctk.CTkFrame(frame, fg_color='transparent')
+        rot_btn_row.pack(pady=4)
+        for text, axis, sign in [
+            ('Rx-', 0, -1), ('Rx+', 0, 1),
+            ('Ry-', 1, -1), ('Ry+', 1, 1),
+            ('Rz-', 2, -1), ('Rz+', 2, 1),
+        ]:
+            btn = ctk.CTkButton(
+                rot_btn_row, text=text, width=48, state='disabled',
+                command=lambda a=axis, s=sign: self._rotate_ik_delta(a, s))
             btn.pack(side='left', padx=2)
             self._cart_delta_buttons.append(btn)
 
@@ -1927,6 +1610,10 @@ class App(ctk.CTk):
         try:    return max(0.001, min(0.20, float(self.entry_cart_step.get())))
         except ValueError: return 0.005
 
+    def _rot_step(self) -> float:
+        try:    return max(0.5, min(30.0, float(self.entry_rot_step.get())))
+        except ValueError: return 5.0
+
     def _on_vel_slider(self, value):
         self.lbl_vel.configure(text=f'{value:.0f} %')
 
@@ -1976,8 +1663,6 @@ class App(ctk.CTk):
         Usa /compute_ik_pose con la matriz R completa de la pose actual — NO la
         reparametrizacion beta/q5/q6+atan2(y,x), que acoplaba la orientacion a la
         posicion y hacia que el movimiento en un solo eje no funcionara.
-        La IK numerica se siembra con la configuracion actual => movimiento
-        continuo y suave sin volteos de munieca.
         """
         pose = self._node.pose_actual
         if pose is None:
@@ -2006,7 +1691,40 @@ class App(ctk.CTk):
                 self._pending_ik_q   = None
                 self._pending_ik_msg = (f'No alcanzable: {msg}', COL['err'])
 
-        self._node.pedir_ik_pose(p_new, R, self.var_elbow.get(), _cb)
+        self._node.pedir_ik_pose(p_new, R, 'up', _cb)
+
+    def _rotate_ik_delta(self, axis: int, sign: int):
+        """Rota la punta UN paso sobre un eje LOCAL de la herramienta,
+        manteniendo la posicion actual EXACTA (rotacion pura). Espejo de
+        `_move_cart_delta` pero para orientacion."""
+        pose = self._node.pose_actual
+        if pose is None:
+            self.lbl_ik_warn.configure(text='Aun no hay pose actual.',
+                                       text_color=COL['warn'])
+            return
+        ang  = math.radians(sign * self._rot_step())
+        p    = pose.pose.position
+        p_now = np.array([p.x, p.y, p.z], float)
+        R    = quaternion_to_matrix(pose.pose.orientation)
+        Rloc = (_rotx3, _roty3, _rotz3)[axis](ang)
+        R_new = R @ Rloc
+        self._set_ik_xyz(*p_now)
+        self._set_ik_orientation(*self._current_orientation_deg())
+        self._pending_vel = self._vel()
+        self.lbl_ik_warn.configure(text='Calculando IK...',
+                                   text_color=COL['warn'])
+
+        def _cb(ok, q_rad, msg):
+            if ok:
+                self._pending_ik_q   = q_rad
+                self._pending_ik_msg = (
+                    f'Rotado {sign*self._rot_step():+.1f}° (posicion fija)', COL['ok'])
+                self._node.publicar_preview(q_rad)
+            else:
+                self._pending_ik_q   = None
+                self._pending_ik_msg = (f'No alcanzable: {msg}', COL['err'])
+
+        self._node.pedir_ik_pose(p_now, R_new, 'up', _cb)
 
     # ── Callbacks de acciones ─────────────────────────────────────
 
@@ -2079,14 +1797,14 @@ class App(ctk.CTk):
             self._node.pedir_cartesian_trajectory(
                 p0, R0, p1, R1,
                 n_steps, self._traj_dt(),
-                self._pending_vel, self.var_elbow.get(),
+                self._pending_vel, 'up',
                 path_tol, goal_tol, _on_traj)
         else:
             self.lbl_ik_warn.configure(text='Calculando IK...',
                                         text_color=COL['warn'])
             self._node.pedir_ik(
                 x, y, z, beta_deg, q5_deg, q6_deg,
-                elbow     = self.var_elbow.get(),
+                elbow     = 'up',
                 vel_pct   = self._pending_vel,
                 on_result = self._on_ik_result,
             )
@@ -2139,7 +1857,7 @@ class App(ctk.CTk):
         want = self._node._req_active
         if want and not self._is_shown:
             self.deiconify(); self.lift(); self._is_shown = True
-            try:    self.tabs.set('Teleop')   # al entrar al brazo, Teleop primero
+            try:    self.tabs.set('IK')   # al entrar al brazo, IK primero
             except Exception: pass
         elif not want and self._is_shown:
             self.withdraw(); self._is_shown = False
@@ -2219,13 +1937,6 @@ class App(ctk.CTk):
         self.btn_use_pose.configure(
             state='normal' if pose is not None else 'disabled')
 
-        # Teleop: botones cartesianos activos si listo y hay pose
-        tp_state = 'normal' if (listo and pose is not None) else 'disabled'
-        for btn in (self._tp_trans_btns + self._tp_orient_btns):
-            btn.configure(state=tp_state)
-        self.btn_tp_sync.configure(
-            state='normal' if pose is not None else 'disabled')
-
         # Aviso de reinicio de buses (flecha derecha del D-pad) — ~2.4 s
         if self._node._bus_reset_flag:
             self._node._bus_reset_flag = False
@@ -2273,26 +1984,6 @@ class App(ctk.CTk):
             text, color = self._pending_rescue_msg
             self.lbl_rescue_msg.configure(text=text, text_color=color)
             self._pending_rescue_msg = None
-
-        if self._pending_teleop_msg is not None:
-            text, color = self._pending_teleop_msg
-            self.lbl_tp_msg.configure(text=text, text_color=color)
-            self._pending_teleop_msg = None
-            self._joy_ik_inflight = False   # llego resultado: liberar para el siguiente paso
-
-        if self._pending_teleop_q is not None:
-            if self._pending_teleop_commit is not None:
-                self._tp_p, self._tp_R = self._pending_teleop_commit
-                self._pending_teleop_commit = None
-                self._update_tp_label()
-            self._node.publicar_joint_cmd(
-                np.array(self._pending_teleop_q), self._vel())
-            self._node.publicar_preview(np.array(self._pending_teleop_q))
-            self._pending_teleop_q = None
-
-        # ── Teleop por joystick (solo en la pestana Teleop) ──
-        if self.tabs.get() == 'Teleop':
-            self._joystick_teleop_step()
 
         # ── Jog manual por servo con el mando (solo en la pestana Jog) ──
         if self.tabs.get() == 'Jog':

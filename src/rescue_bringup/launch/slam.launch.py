@@ -225,6 +225,7 @@ def generate_launch_description():
                     'max_range':   4.0,
                     'min_range':   0.3,
                     'sample_rate': 3,
+                    'prefer_pcl_tools': True,
                 }],
             )
         ],

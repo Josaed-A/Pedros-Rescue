@@ -26,7 +26,7 @@ ax12a_driver:                      # nombre del nodo dynamixel_bus_node
         id: 18
         reduccion: 27.0
         deadband_deg: 0.5
-        invertir_giro: ture
+        invertir_giro: true
       Munieca_P:
         id: 30
         reduccion: 27.0
@@ -41,7 +41,7 @@ ax12a_driver:                      # nombre del nodo dynamixel_bus_node
         id: 6
         reduccion: 16.0
         deadband_deg: 0.5
-        invertir_giro: false
+        invertir_giro: true
     # ── PATAS (modo rueda, giro continuo) — mismo bus AX-12A ──
     # IDs y reduccion PROVISIONALES: actualizar con los reales.
     # velocidad fija de giro (0-100%); el stick solo decide direccion on/off.
@@ -51,19 +51,19 @@ ax12a_driver:                      # nombre del nodo dynamixel_bus_node
     wheels:
       PataDelIzq:                  # delantera izquierda
         id: 21
-        reduccion: 64 
+        reduccion: 64.0
         invertir_giro: false
       PataDelDer:                  # delantera derecha (lado opuesto -> invertida)
         id: 22
-        reduccion: 64
+        reduccion: 64.0
         invertir_giro: true
       PataTrasIzq:                 # trasera izquierda
         id: 23
-        reduccion: 64
+        reduccion: 64.0
         invertir_giro: false
       PataTrasDer:                 # trasera derecha (lado opuesto -> invertida)
         id: 24
-        reduccion: 64
+        reduccion: 64.0
         invertir_giro: true
 
 ex106_driver:                      # nombre del nodo ex106_driver_node

@@ -179,10 +179,7 @@ class CinematicaNode(Node):
                    @ rotx(np.radians(req.q5_deg))   # Muñeca_Y (eje X)
                    @ rotz(np.radians(req.q6_deg)))[:3, :3]  # Muñeca_R (eje Z)
             Td  = make_T(Rd, [req.x, req.y, req.z])
-            # Semilla = configuracion actual (en convencion cinematica) para
-            # continuidad/suavidad y evitar volteos de munieca.
-            q   = self._arm.ik(Td, req.elbow,
-                               q_init=self._q_actual * self._fk_sign)
+            q   = self._arm.ik(Td)
             res.success = True
             # Convertir de convencion cinematica a convencion de servo
             # (fk_sign invierte los joints marcados en sim_invert_joints).
@@ -195,21 +192,17 @@ class CinematicaNode(Node):
         return res
 
     def _srv_ik_pose(self, req, res):
-        """IK desde una pose completa Td = [R|p] (para teleoperacion cartesiana).
+        """IK desde una pose completa Td = [R|p] (para movimiento cartesiano).
 
-        Usa el mismo solver geometrico self._arm.ik sin cambios. Solo arma Td
-        con la R recibida y verifica que la POSICION sea alcanzable (la
-        orientacion es best-effort: la munieca de 2 ejes puede no cubrir toda
-        SO(3) en cualquier punto).
+        Usa el mismo solver analitico self._arm.ik. Solo arma Td con la R
+        recibida y verifica que la POSICION sea alcanzable (la orientacion es
+        best-effort: la munieca de 2 ejes puede no cubrir toda SO(3) en
+        cualquier punto).
         """
         try:
             R = np.array(req.r, dtype=float).reshape(3, 3)
             Td = make_T(R, [req.x, req.y, req.z])
-            # Semilla = configuracion actual (en convencion cinematica). En una
-            # trayectoria cartesiana cada paso parte del anterior => movimiento
-            # continuo y suave (incl. desplazamientos en Z) sin volteos.
-            q  = self._arm.ik(Td, req.elbow or 'down',
-                              q_init=self._q_actual * self._fk_sign)
+            q  = self._arm.ik(Td)
 
             p_fk = self._arm.fk(q)['points'][-1]
             err  = float(np.linalg.norm(p_fk - np.array([req.x, req.y, req.z])))

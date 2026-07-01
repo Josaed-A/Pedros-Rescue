@@ -78,14 +78,6 @@ def _dh(theta: float, d: float, a: float, alpha: float) -> np.ndarray:
     ], dtype=float)
 
 
-def _wrap(a: float) -> float:
-    return (float(a) + np.pi) % (2.0 * np.pi) - np.pi
-
-
-def _wrap_vec(a: np.ndarray) -> np.ndarray:
-    return (np.asarray(a, dtype=float) + np.pi) % (2.0 * np.pi) - np.pi
-
-
 def _as_meters(value: float) -> float:
     """Accept meters directly, or centimeters for values like 36."""
     value = float(value)
@@ -109,42 +101,6 @@ def roty3(t: float) -> np.ndarray:
 def rotz3(t: float) -> np.ndarray:
     """3x3 rotation about Z."""
     return rotz(t)[:3, :3]
-
-
-# Private aliases kept for the wrist model below.
-_rotz3 = rotz3
-_rotx3 = rotx3
-
-
-def rot_log(R: np.ndarray) -> np.ndarray:
-    """SO(3) log map as axis * angle."""
-    R = np.asarray(R, dtype=float).reshape(3, 3)
-    cos_a = np.clip((np.trace(R) - 1.0) / 2.0, -1.0, 1.0)
-    angle = float(np.arccos(cos_a))
-    if angle < 1e-9:
-        return np.zeros(3)
-
-    if angle > np.pi - 1e-6:
-        A = (R + np.eye(3)) / 2.0
-        axis = np.sqrt(np.clip(np.diag(A), 0.0, 1.0))
-        if axis[0] >= axis[1] and axis[0] >= axis[2]:
-            axis[1] = np.copysign(axis[1], R[0, 1] + R[1, 0])
-            axis[2] = np.copysign(axis[2], R[0, 2] + R[2, 0])
-        elif axis[1] >= axis[2]:
-            axis[0] = np.copysign(axis[0], R[0, 1] + R[1, 0])
-            axis[2] = np.copysign(axis[2], R[1, 2] + R[2, 1])
-        else:
-            axis[0] = np.copysign(axis[0], R[0, 2] + R[2, 0])
-            axis[1] = np.copysign(axis[1], R[1, 2] + R[2, 1])
-        n = np.linalg.norm(axis)
-        return (axis / n) * angle if n > 1e-9 else np.zeros(3)
-
-    w = np.array([
-        R[2, 1] - R[1, 2],
-        R[0, 2] - R[2, 0],
-        R[1, 0] - R[0, 1],
-    ], dtype=float) / (2.0 * np.sin(angle))
-    return w * angle
 
 
 def rot_to_rpy(R: np.ndarray) -> tuple[float, float, float]:
@@ -235,20 +191,6 @@ class Arm6DOF:
         ], dtype=float)
         return R01 @ R12 @ R23
 
-    @staticmethod
-    def _R36_from_angles(q4: float, q5: float, q6: float) -> np.ndarray:
-        # Standard spherical wrist matching the MATLAB extraction:
-        # q5 = atan2(hypot(R13, R23), R33)
-        # q4 = atan2(-R23, -R13)
-        # q6 = atan2(-R32, R31)
-        return (
-            _rotz3(q4)
-            @ _rotx3(np.pi / 2.0)
-            @ _rotz3(q5)
-            @ _rotx3(-np.pi / 2.0)
-            @ _rotz3(q6)
-        )
-
     def fk_chain(self, q: np.ndarray) -> list[np.ndarray]:
         q1, q2, q3, q4, q5, q6 = np.asarray(q, dtype=float).reshape(6)
 
@@ -277,113 +219,55 @@ class Arm6DOF:
         return {"T06": chain[-1], "points": pts}
 
     # ------------------------------------------------------------------
-    # Analytic inverse kinematics
+    # Inverse kinematics — puerto directo de cinematica_inversa_esferica()
     # ------------------------------------------------------------------
 
-    def _ik_position_candidates(
-        self,
-        p_des: np.ndarray,
-        elbow: str = "down",
-    ) -> list[np.ndarray]:
-        x, y, z = np.asarray(p_des, dtype=float).reshape(3)
-        q1 = float(np.arctan2(y, x))
-        r_plane = float(np.hypot(x, y))
-        z_plane = float(z - self.d1)
+    def ik(self, Td: np.ndarray) -> np.ndarray:
+        """Cinematica inversa analitica (muneca esferica), solucion "codo
+        arriba" unica. Td = [R|p] deseada (4x4). Devuelve q (rad, 1x6) en
+        convencion de servo (q3 ya compensa `q3_offset`, ver `_R03_from_angles`).
+        """
+        Td = np.asarray(Td, dtype=float).reshape(4, 4)
+        P_des = Td[:3, 3]
+        R_des = Td[:3, :3]
+        xc, yc, zc = P_des
 
-        num = r_plane**2 + z_plane**2 - self.a2**2 - self.a3**2
-        den = 2.0 * self.a2 * self.a3
-        D = num / den
-        if D > 1.0 + 1e-9 or D < -1.0 - 1e-9:
+        # --- Cinematica de posicion (q1, q2, q3) ---
+        q1 = float(np.arctan2(yc, xc))
+
+        r_plano = float(np.hypot(xc, yc))
+        z_plano = float(zc - self.d1)
+
+        num_q3 = r_plano**2 + z_plano**2 - self.a2**2 - self.a3**2
+        den_q3 = 2.0 * self.a2 * self.a3
+        D = num_q3 / den_q3
+        if abs(D) > 1.0 + 1e-9:
             raise ValueError(
-                "El punto objetivo esta fuera del espacio de trabajo del robot."
+                "El punto objetivo se encuentra fuera del espacio de trabajo del robot."
             )
         D = float(np.clip(D, -1.0, 1.0))
 
-        primary_sign = 1.0 if str(elbow).lower() != "up" else -1.0
-        signs = [primary_sign, -primary_sign]
-        out: list[np.ndarray] = []
-        for sign in signs:
-            q3_kin = float(np.arctan2(sign * np.sqrt(max(0.0, 1.0 - D**2)), D))
-            gamma = float(np.arctan2(z_plane, r_plane))
-            beta = float(np.arctan2(
-                self.a3 * np.sin(q3_kin),
-                self.a2 + self.a3 * np.cos(q3_kin),
-            ))
-            q2 = gamma - beta
-            q3 = q3_kin - self.q3_offset   # convertir a convencion de servo
-            out.append(np.array([_wrap(q1), _wrap(q2), _wrap(q3)], dtype=float))
-        return out
-
-    @staticmethod
-    def _extract_wrist(R36: np.ndarray) -> tuple[float, float, float]:
-        R36 = np.asarray(R36, dtype=float).reshape(3, 3)
-        q5 = float(np.arctan2(
-            np.hypot(R36[0, 2], R36[1, 2]),
-            R36[2, 2],
+        q3_kin = float(np.arctan2(np.sqrt(1.0 - D**2), D))   # codo arriba
+        gamma = float(np.arctan2(z_plano, r_plano))
+        beta = float(np.arctan2(
+            self.a3 * np.sin(q3_kin),
+            self.a2 + self.a3 * np.cos(q3_kin),
         ))
+        q2 = gamma - beta
+        q3 = q3_kin - self.q3_offset   # convertir a convencion de servo
+
+        # --- Cinematica de orientacion (q4, q5, q6) ---
+        R03 = self._R03_from_angles(q1, q2, q3)
+        R36 = R03.T @ R_des
+
+        q5 = float(np.arctan2(
+            np.sqrt(R36[0, 2]**2 + R36[1, 2]**2), R36[2, 2]))
 
         if abs(np.sin(q5)) < 1e-6:
-            # Muneca alineada (q5=0/pi): un solo grado de libertad combinado.
-            # Formula analitica (cinematica_inversa_esferica): q4=0 fijo,
-            # q6 = atan2(-R36[1,0], R36[0,0]).
             q4 = 0.0
             q6 = float(np.arctan2(-R36[1, 0], R36[0, 0]))
         else:
             q4 = float(np.arctan2(-R36[1, 2], -R36[0, 2]))
             q6 = float(np.arctan2(-R36[2, 1], R36[2, 0]))
-        return q4, q5, q6
 
-    @staticmethod
-    def _equivalent_wrist(q: np.ndarray) -> np.ndarray:
-        alt = np.asarray(q, dtype=float).copy()
-        alt[3] += np.pi
-        alt[4] = -alt[4]
-        alt[5] += np.pi
-        return np.array([_wrap(v) for v in alt], dtype=float)
-
-    @staticmethod
-    def _closest(candidates: list[np.ndarray], q_init: np.ndarray | None) -> np.ndarray:
-        if q_init is None:
-            return candidates[0]
-        qi = np.asarray(q_init, dtype=float).reshape(6)
-        return min(
-            candidates,
-            key=lambda q: float(np.linalg.norm(_wrap_vec(np.asarray(q) - qi))),
-        )
-
-    def ik(
-        self,
-        Td: np.ndarray,
-        elbow: str = "down",
-        q_init: np.ndarray | None = None,
-        *_,
-        **__,
-    ) -> np.ndarray:
-        """
-        Analytic inverse kinematics for a full desired pose Td = [R | p].
-
-        Extra positional/solver arguments are accepted for compatibility with
-        the previous numerical solver API.
-        """
-        Td = np.asarray(Td, dtype=float).reshape(4, 4)
-        R_des = Td[:3, :3]
-        p_des = Td[:3, 3]
-
-        candidates: list[np.ndarray] = []
-        for q123 in self._ik_position_candidates(p_des, elbow):
-            q1, q2, q3 = q123
-            R03 = self._R03_from_angles(q1, q2, q3)
-            R36 = R03.T @ R_des
-            q4, q5, q6 = self._extract_wrist(R36)
-            q = np.array([q1, q2, q3, q4, q5, q6], dtype=float)
-            q = np.array([_wrap(v) for v in q], dtype=float)
-            candidates.append(q)
-            candidates.append(self._equivalent_wrist(q))
-
-        return self._closest(candidates, q_init)
-
-    def pose_error(self, q: np.ndarray, Rd: np.ndarray, pd: np.ndarray) -> np.ndarray:
-        T = self.fk(q)["T06"]
-        e_p = np.asarray(pd, dtype=float).reshape(3) - T[:3, 3]
-        e_o = rot_log(np.asarray(Rd, dtype=float).reshape(3, 3) @ T[:3, :3].T)
-        return np.concatenate([e_p, e_o])
+        return np.array([q1, q2, q3, q4, q5, q6], dtype=float)
