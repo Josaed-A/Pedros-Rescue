@@ -176,6 +176,13 @@ class ArmParams:
     # model has no position offset after joint 3.
     L3: float = 0.0
     tool_length: float = 0.0
+    # Offset mecanico del codo: en la calibracion fisica (q3_servo=0) el
+    # eslabon L2-L3 no queda perfectamente recto, sino con esta flexion (deg).
+    # Sin esto, q3=0 cae EXACTAMENTE en max_reach (brazo 100% estirado), que
+    # es un limite duro del espacio de trabajo (D=1 en la ley de cosenos):
+    # cualquier movimiento en casi cualquier direccion desde ahi se rechaza
+    # como "fuera de alcance". El offset separa el home logico de ese borde.
+    elbow_offset_deg: float = 5.0
 
 
 class Arm6DOF:
@@ -194,6 +201,11 @@ class Arm6DOF:
     def a3(self) -> float:
         return -abs(_as_meters(self.p.L2))
 
+    @property
+    def q3_offset(self) -> float:
+        """Angulo cinematico real del codo cuando el servo reporta q3=0."""
+        return float(np.radians(self.p.elbow_offset_deg))
+
     def max_reach(self) -> float:
         return abs(self.a2) + abs(self.a3)
 
@@ -201,11 +213,10 @@ class Arm6DOF:
     # Forward kinematics
     # ------------------------------------------------------------------
 
-    @staticmethod
-    def _R03_from_angles(q1: float, q2: float, q3: float) -> np.ndarray:
+    def _R03_from_angles(self, q1: float, q2: float, q3: float) -> np.ndarray:
         c1, s1 = np.cos(q1), np.sin(q1)
-        c2, s2 = np.cos(q2 - np.pi / 2.0), np.sin(q2 - np.pi / 2.0)
-        c3, s3 = np.cos(q3), np.sin(q3)
+        c2, s2 = np.cos(q2), np.sin(q2)
+        c3, s3 = np.cos(q3 + self.q3_offset), np.sin(q3 + self.q3_offset)
 
         R01 = np.array([
             [c1, 0.0,  s1],
@@ -242,8 +253,8 @@ class Arm6DOF:
         q1, q2, q3, q4, q5, q6 = np.asarray(q, dtype=float).reshape(6)
 
         A01 = _dh(q1, self.d1, 0.0, np.pi / 2.0)
-        A12 = _dh(q2 - np.pi / 2.0, 0.0, self.a2, 0.0)
-        A23 = _dh(q3, 0.0, self.a3, 0.0)
+        A12 = _dh(q2, 0.0, self.a2, 0.0)
+        A23 = _dh(q3 + self.q3_offset, 0.0, self.a3, 0.0)
 
         T03 = A01 @ A12 @ A23
         T03[:3, :3] = self._R03_from_angles(q1, q2, q3)
@@ -292,21 +303,19 @@ class Arm6DOF:
         signs = [primary_sign, -primary_sign]
         out: list[np.ndarray] = []
         for sign in signs:
-            q3 = float(np.arctan2(sign * np.sqrt(max(0.0, 1.0 - D**2)), D))
+            q3_kin = float(np.arctan2(sign * np.sqrt(max(0.0, 1.0 - D**2)), D))
             gamma = float(np.arctan2(z_plane, r_plane))
             beta = float(np.arctan2(
-                self.a3 * np.sin(q3),
-                self.a2 + self.a3 * np.cos(q3),
+                self.a3 * np.sin(q3_kin),
+                self.a2 + self.a3 * np.cos(q3_kin),
             ))
-            q2 = gamma - beta + np.pi / 2.0
+            q2 = gamma - beta
+            q3 = q3_kin - self.q3_offset   # convertir a convencion de servo
             out.append(np.array([_wrap(q1), _wrap(q2), _wrap(q3)], dtype=float))
         return out
 
     @staticmethod
-    def _extract_wrist(
-        R36: np.ndarray,
-        q4_hint: float | None = None,
-    ) -> tuple[float, float, float]:
+    def _extract_wrist(R36: np.ndarray) -> tuple[float, float, float]:
         R36 = np.asarray(R36, dtype=float).reshape(3, 3)
         q5 = float(np.arctan2(
             np.hypot(R36[0, 2], R36[1, 2]),
@@ -314,12 +323,11 @@ class Arm6DOF:
         ))
 
         if abs(np.sin(q5)) < 1e-6:
-            total = float(np.arctan2(R36[1, 0], R36[0, 0]))
-            # MATLAB fixes q4=0 here. If the current pose is available, keep q4
-            # near it and put the remaining rotation in q6 to avoid a visible
-            # servo jump while preserving the same wrist rotation.
-            q4 = 0.0 if q4_hint is None else _wrap(q4_hint)
-            q6 = total - q4
+            # Muneca alineada (q5=0/pi): un solo grado de libertad combinado.
+            # Formula analitica (cinematica_inversa_esferica): q4=0 fijo,
+            # q6 = atan2(-R36[1,0], R36[0,0]).
+            q4 = 0.0
+            q6 = float(np.arctan2(-R36[1, 0], R36[0, 0]))
         else:
             q4 = float(np.arctan2(-R36[1, 2], -R36[0, 2]))
             q6 = float(np.arctan2(-R36[2, 1], R36[2, 0]))
@@ -366,8 +374,7 @@ class Arm6DOF:
             q1, q2, q3 = q123
             R03 = self._R03_from_angles(q1, q2, q3)
             R36 = R03.T @ R_des
-            q4_hint = None if q_init is None else float(np.asarray(q_init)[3])
-            q4, q5, q6 = self._extract_wrist(R36, q4_hint=q4_hint)
+            q4, q5, q6 = self._extract_wrist(R36)
             q = np.array([q1, q2, q3, q4, q5, q6], dtype=float)
             q = np.array([_wrap(v) for v in q], dtype=float)
             candidates.append(q)

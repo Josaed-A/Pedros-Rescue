@@ -10,6 +10,10 @@ cinematica:
     L2:           0.20
     L3:           0.12
     tool_length:  0.10
+    # Flexion real del codo cuando el servo esta calibrado en 0 (grados).
+    # Sin esto, home queda exactamente en el limite de alcance (codo 100%
+    # recto) y casi ningun movimiento de teleop es alcanzable desde ahi.
+    elbow_offset_deg: 5.0
     joint_order:
       - "Base"
       - "Hombro"

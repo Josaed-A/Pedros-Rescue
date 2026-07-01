@@ -11,21 +11,29 @@ Nodos que levanta:
 
 import os
 
-import xacro
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument
+from launch.conditions import IfCondition
 from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
 
 
 def generate_launch_description():
     use_sim_time = LaunchConfiguration('use_sim_time', default='false')
+    launch_joint_state_publisher = LaunchConfiguration(
+        'launch_joint_state_publisher', default='false')
 
     # ── Cargar y procesar URDF con xacro ──────────────────────────
     pkg_desc = get_package_share_directory('rescue_robot_description')
     xacro_file = os.path.join(pkg_desc, 'urdf', 'rescue_robot.urdf.xacro')
-    robot_description_content = xacro.process_file(xacro_file).toxml()
+    urdf_file = os.path.join(pkg_desc, 'urdf', 'rescue_robot.urdf')
+    try:
+        import xacro
+        robot_description_content = xacro.process_file(xacro_file).toxml()
+    except ModuleNotFoundError:
+        with open(urdf_file, 'r', encoding='utf-8') as f:
+            robot_description_content = f.read()
 
     # ── robot_state_publisher ─────────────────────────────────────
     rsp_node = Node(
@@ -46,6 +54,7 @@ def generate_launch_description():
         name='joint_state_publisher',
         output='screen',
         parameters=[{'use_sim_time': use_sim_time}],
+        condition=IfCondition(launch_joint_state_publisher),
     )
 
     # ── TF estático: odom → base_footprint (identidad) ───────────
@@ -64,6 +73,11 @@ def generate_launch_description():
             'use_sim_time',
             default_value='false',
             description='Usar reloj de simulación (false para hardware real)',
+        ),
+        DeclareLaunchArgument(
+            'launch_joint_state_publisher',
+            default_value='false',
+            description='Publicar joints para visualización; no requerido para SLAM',
         ),
         rsp_node,
         jsp_node,

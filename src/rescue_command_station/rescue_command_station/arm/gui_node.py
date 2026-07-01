@@ -852,6 +852,10 @@ class App(ctk.CTk):
         self._joy_ik_inflight    = False   # 1 sola peticion IK por joystick a la vez
         self._joy_inflight_ticks = 0       # timeout de seguridad si la IK no responde
         self._bus_reset_ticks    = 0       # ticks restantes del banner de reinicio de buses
+
+        # Jog manual por servo con el mando (pestana 'Jog')
+        self._jog_inflight: set[int] = set()   # indices de joint con /..._jog en curso
+        self._jog_gp_indicator_on: bool | None = None
         self._last_cart_in_prog  = False   # detecta flanco bajada para re-habilitar btn
 
         self.title('Brazo 6-DOF — Control ROS2')
@@ -955,13 +959,14 @@ class App(ctk.CTk):
         # ── Pestanas de control (submodos; se ciclan con L1/R1) ────
         self.tabs = ctk.CTkTabview(left)
         self.tabs.grid(row=3, column=0, sticky='nsew', padx=8, pady=4)
-        self._tab_order = ['Mover', 'Teleop', 'IK', 'Calibrar',
+        self._tab_order = ['Mover', 'Teleop', 'Jog', 'IK', 'Calibrar',
                            'Rescate', 'Estado']
         for name in self._tab_order:
             self.tabs.add(name)
 
         self._build_tab_fk(self.tabs.tab('Mover'))
         self._build_tab_teleop(self.tabs.tab('Teleop'))
+        self._build_tab_jog(self.tabs.tab('Jog'))
         self._build_tab_ik(self.tabs.tab('IK'))
         self._build_tab_calib(self.tabs.tab('Calibrar'))
         self._build_tab_rescue(self.tabs.tab('Rescate'))
@@ -1366,6 +1371,157 @@ class App(ctk.CTk):
             self.lbl_joy_state.configure(
                 text='● Joystick:  Izq → X/Y   Gatillos → Z   Der → rotacion',
                 text_color=COL['muted'], fg_color=COL['surface'])
+
+    # ── Tab Jog: mueve cada servo individualmente con el mando ─────
+    #   L1/R1        -> Base        (paso por pulsacion)
+    #   L2/R2        -> Hombro      (continuo mientras se mantiene)
+    #   Stick Izq X  -> Codo
+    #   Stick Izq Y  -> Munieca_P
+    #   Stick Der X  -> Munieca_Y
+    #   Stick Der Y  -> Munieca_R
+
+    _JOG_GP_LABELS = ('L1 ◄ / ► R1', 'L2 ◄ / ► R2', 'Stick Izq X',
+                       'Stick Izq Y', 'Stick Der X', 'Stick Der Y')
+
+    def _build_tab_jog(self, tab):
+        frame = ctk.CTkScrollableFrame(tab, fg_color='transparent')
+        frame.pack(fill='both', expand=True)
+
+        ctk.CTkLabel(
+            frame, text='Jog manual por servo (mando)',
+            font=('Roboto', 14, 'bold')).pack(pady=(4, 2))
+
+        self.lbl_jog_gp_state = ctk.CTkLabel(
+            frame, text='● Joystick:  L1/R1 Base · L2/R2 Hombro · '
+                        'sticks Codo/Munieca_P/Y/R',
+            fg_color=COL['surface'], text_color=COL['muted'],
+            corner_radius=6, height=28)
+        self.lbl_jog_gp_state.pack(fill='x', padx=4, pady=(0, 8))
+
+        step_row = ctk.CTkFrame(frame, fg_color='transparent')
+        step_row.pack(fill='x', padx=4, pady=4)
+        ctk.CTkLabel(step_row, text='Paso (°/ciclo):').pack(side='left')
+        self.entry_gp_jog_step = ctk.CTkEntry(step_row, width=55)
+        self.entry_gp_jog_step.insert(0, '2')
+        self.entry_gp_jog_step.pack(side='left', padx=6)
+        ctk.CTkLabel(step_row, text='Vel %:').pack(side='left', padx=(12, 0))
+        self.entry_gp_jog_vel = ctk.CTkEntry(step_row, width=55)
+        self.entry_gp_jog_vel.insert(0, '15')
+        self.entry_gp_jog_vel.pack(side='left', padx=6)
+
+        self._lbl_gp_jog_angs: list[ctk.CTkLabel] = []
+        for name, ctrl in zip(self._node.joint_order, self._JOG_GP_LABELS):
+            row = ctk.CTkFrame(frame)
+            row.pack(fill='x', padx=2, pady=2)
+            ctk.CTkLabel(row, text=name, width=90,
+                         anchor='w').pack(side='left', padx=6)
+            lbl = ctk.CTkLabel(row, text='0.00°', width=64, anchor='e',
+                               font=('Roboto', 12, 'bold'),
+                               text_color=COL['accent'])
+            lbl.pack(side='left')
+            self._lbl_gp_jog_angs.append(lbl)
+            ctk.CTkLabel(row, text=ctrl, width=110, anchor='e',
+                         text_color=COL['muted']).pack(side='right', padx=6)
+
+        self.lbl_gp_jog_msg = ctk.CTkLabel(frame, text='',
+                                           text_color=COL['warn'], wraplength=340)
+        self.lbl_gp_jog_msg.pack(pady=2)
+
+    def _gp_jog_step(self) -> float:
+        try:    return max(0.2, min(10.0, float(self.entry_gp_jog_step.get())))
+        except ValueError: return 2.0
+
+    def _gp_jog_vel(self) -> float:
+        try:    return max(1.0, min(50.0, float(self.entry_gp_jog_vel.get())))
+        except ValueError: return 15.0
+
+    def _set_gp_jog_indicator(self, active):
+        if self._jog_gp_indicator_on == active:
+            return
+        self._jog_gp_indicator_on = active
+        if active:
+            self.lbl_jog_gp_state.configure(
+                text='● MOVIENDO SERVO', text_color=COL['panel_bg'],
+                fg_color=COL['ok'])
+        else:
+            self.lbl_jog_gp_state.configure(
+                text='● Joystick:  L1/R1 Base · L2/R2 Hombro · '
+                     'sticks Codo/Munieca_P/Y/R',
+                text_color=COL['muted'], fg_color=COL['surface'])
+
+    def _jog_by_index(self, idx: int, sign: float):
+        """Jog directo del servo `idx` (indice en joint_order), sin pasar por
+        IK: pide al driver un nuevo target = angulo actual + paso, a la
+        velocidad configurada. Guardia por-joint (`_jog_inflight`) para no
+        acumular llamadas de servicio mientras el mando se mantiene pulsado."""
+        if idx in self._jog_inflight:
+            return
+        joint_order = self._node.joint_order
+        if idx >= len(joint_order):
+            return
+        name = joint_order[idx]
+        current_deg = np.degrees(self._node.q_actual[idx])
+        target = (current_deg + sign * self._gp_jog_step()) % 360.0
+        self._jog_inflight.add(idx)
+
+        def _cb(ok, msg):
+            self._jog_inflight.discard(idx)
+            if not ok:
+                self._set_gp_jog_msg(f'{name}: {msg}', COL['err'])
+
+        self._node.jog(name, target, self._gp_jog_vel(), on_result=_cb)
+
+    def _set_gp_jog_msg(self, text: str, color: str):
+        self.lbl_gp_jog_msg.configure(text=text, text_color=color)
+
+    def _joystick_jog_step(self):
+        """Lee el mando cada ciclo (~120 ms) y jogea el servo mapeado a cada
+        control mientras la pestana 'Jog' este activa. L1/R1 llegan como
+        pasos ya contados por el nodo (_submode_step, edge-triggered); los
+        gatillos y los sticks se leen como ejes continuos (activos mientras
+        se mantienen)."""
+        ax_st, ex_st = self._node.ax_status, self._node.ex_status
+        if not (ax_st['conectado'] or ex_st['conectado']) or \
+           ax_st['emergencia'] or ex_st['emergencia']:
+            self._node._submode_step = 0
+            return
+
+        axes = self._node._joy_axes
+        dz = cfg.ARM_DEADZONE
+
+        def ax(i):
+            v = axes[i] if (axes and i < len(axes)) else 0.0
+            return v if abs(v) > dz else 0.0
+
+        def trig(i):
+            v = axes[i] if (axes and i < len(axes)) else 1.0
+            return max(0.0, (1.0 - v) / 2.0)
+
+        # L1/R1 -> Base: pasos discretos ya contados por el nodo (evita que
+        # ademas ciclen de pestana mientras estamos en 'Jog').
+        base_step = self._node._submode_step
+        if base_step:
+            self._node._submode_step = 0
+
+        hombro_delta = trig(cfg.AXIS_R2) - trig(cfg.AXIS_L2)
+        codo_delta      = ax(cfg.AXIS_LEFT_X)
+        munieca_p_delta = -ax(cfg.AXIS_LEFT_Y)   # stick Y viene invertido
+        munieca_y_delta = ax(cfg.AXIS_RIGHT_X)
+        munieca_r_delta = -ax(cfg.AXIS_RIGHT_Y)
+
+        deltas = [base_step, hombro_delta, codo_delta,
+                  munieca_p_delta, munieca_y_delta, munieca_r_delta]
+
+        active = any(abs(d) > 1e-6 for d in deltas)
+        self._set_gp_jog_indicator(active)
+        if not active:
+            return
+
+        for idx, d in enumerate(deltas):
+            if abs(d) <= 1e-6:
+                continue
+            sign = 1.0 if d > 0 else -1.0
+            self._jog_by_index(idx, sign)
 
     # ── Tab IK ────────────────────────────────────────────────────
 
@@ -1994,16 +2150,18 @@ class App(ctk.CTk):
             self.after(150, self._loop_ui)
             return
 
-        # ── L1/R1 → ciclar submodos (tabs) ──
-        step = self._node._submode_step
-        if step:
-            self._node._submode_step = 0
-            try:
-                cur = self.tabs.get()
-                i = (self._tab_order.index(cur) + step) % len(self._tab_order)
-                self.tabs.set(self._tab_order[i])
-            except Exception:
-                pass
+        # ── L1/R1 → ciclar submodos (tabs), EXCEPTO en 'Jog' donde L1/R1
+        # jogean el servo Base y no deben ademas cambiar de pestana ──
+        if self.tabs.get() != 'Jog':
+            step = self._node._submode_step
+            if step:
+                self._node._submode_step = 0
+                try:
+                    cur = self.tabs.get()
+                    i = (self._tab_order.index(cur) + step) % len(self._tab_order)
+                    self.tabs.set(self._tab_order[i])
+                except Exception:
+                    pass
 
         # ── Camara frontal + QR/senal (lado derecho, siempre visible) ──
         self._refresh_camera()
@@ -2093,6 +2251,8 @@ class App(ctk.CTk):
             lbl.configure(text=f'actual: {np.degrees(q[i]):.2f}°')
         for i, lbl in enumerate(self._lbl_jog_angs):
             lbl.configure(text=f'{np.degrees(q[i]):.2f}°')
+        for i, lbl in enumerate(self._lbl_gp_jog_angs):
+            lbl.configure(text=f'{np.degrees(q[i]):.2f}°')
 
         # Pose del efector
         if pose is not None:
@@ -2133,6 +2293,12 @@ class App(ctk.CTk):
         # ── Teleop por joystick (solo en la pestana Teleop) ──
         if self.tabs.get() == 'Teleop':
             self._joystick_teleop_step()
+
+        # ── Jog manual por servo con el mando (solo en la pestana Jog) ──
+        if self.tabs.get() == 'Jog':
+            self._joystick_jog_step()
+        elif self._jog_gp_indicator_on:
+            self._set_gp_jog_indicator(False)
 
         if self._pending_ik_msg is not None:
             texto, color = self._pending_ik_msg

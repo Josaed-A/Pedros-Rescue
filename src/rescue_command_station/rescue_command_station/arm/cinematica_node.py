@@ -53,6 +53,7 @@ class CinematicaNode(Node):
         self.declare_parameter('L2',           0.20)
         self.declare_parameter('L3',           0.12)
         self.declare_parameter('tool_length',  0.10)
+        self.declare_parameter('elbow_offset_deg', 5.0)
         self.declare_parameter('joint_order',
             ['Base', 'Hombro', 'Codo', 'Munieca_P', 'Munieca_Y', 'Munieca_R'])
         # Joints cuyo giro fisico va al reves del modelo. Se declara como STRING
@@ -67,6 +68,7 @@ class CinematicaNode(Node):
             L2          = self.get_parameter('L2').value,
             L3          = self.get_parameter('L3').value,
             tool_length = self.get_parameter('tool_length').value,
+            elbow_offset_deg = self.get_parameter('elbow_offset_deg').value,
         )
         self._arm         = Arm6DOF(p)
         self._joint_order = self.get_parameter('joint_order').value

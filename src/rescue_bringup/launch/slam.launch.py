@@ -45,6 +45,7 @@ def generate_launch_description():
     launch_rviz       = LaunchConfiguration('launch_rviz',    default='true')
     launch_lidar      = LaunchConfiguration('launch_lidar',   default='true')
     launch_camera     = LaunchConfiguration('launch_camera',  default='true')
+    launch_camera_scan = LaunchConfiguration('launch_camera_scan', default='false')
     launch_robot_description = LaunchConfiguration('launch_robot_description', default='true')
     launch_detector   = LaunchConfiguration('launch_detector', default='false')
     hazmat_model_path = LaunchConfiguration('hazmat_model',   default='')
@@ -97,6 +98,7 @@ def generate_launch_description():
                     ('depth_camera_info', '/camera/depth/camera_info'),
                     ('scan',              '/camera/scan'),
                 ],
+                condition=IfCondition(launch_camera_scan),
             )
         ],
     )
@@ -319,6 +321,11 @@ def generate_launch_description():
             'launch_camera',
             default_value='true',
             description='Lanzar driver cámara (false si ya corre en Pi)',
+        ),
+        DeclareLaunchArgument(
+            'launch_camera_scan',
+            default_value='false',
+            description='Convertir depth de cámara a LaserScan frontal para fusionar con LiDAR',
         ),
         DeclareLaunchArgument(
             'launch_robot_description',

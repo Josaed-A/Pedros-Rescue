@@ -21,22 +21,22 @@ ax12a_driver:                      # nombre del nodo dynamixel_bus_node
         id: 16
         reduccion: 27.0
         deadband_deg: 0.5
-        invertir_giro: false
+        invertir_giro: true
       Codo:
         id: 18
         reduccion: 27.0
         deadband_deg: 0.5
-        invertir_giro: false
+        invertir_giro: ture
       Munieca_P:
         id: 30
         reduccion: 27.0
         deadband_deg: 0.5
-        invertir_giro: true
+        invertir_giro: false
       Munieca_Y:
         id: 4
         reduccion: 16.0
         deadband_deg: 0.5
-        invertir_giro: false
+        invertir_giro: true
       Munieca_R:
         id: 6
         reduccion: 16.0
@@ -51,19 +51,19 @@ ax12a_driver:                      # nombre del nodo dynamixel_bus_node
     wheels:
       PataDelIzq:                  # delantera izquierda
         id: 21
-        reduccion: 64.0          # reduccion PROVISIONAL (x)
+        reduccion: 64 
         invertir_giro: false
       PataDelDer:                  # delantera derecha (lado opuesto -> invertida)
         id: 22
-        reduccion: 64.0
+        reduccion: 64
         invertir_giro: true
       PataTrasIzq:                 # trasera izquierda
         id: 23
-        reduccion: 64.0
+        reduccion: 64
         invertir_giro: false
       PataTrasDer:                 # trasera derecha (lado opuesto -> invertida)
         id: 24
-        reduccion: 64.0
+        reduccion: 64
         invertir_giro: true
 
 ex106_driver:                      # nombre del nodo ex106_driver_node

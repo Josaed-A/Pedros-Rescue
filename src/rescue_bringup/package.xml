@@ -26,6 +26,7 @@
   <exec_depend>tf2_tools</exec_depend>
   <exec_depend>tf2_sensor_msgs</exec_depend>
   <exec_depend>slam_toolbox</exec_depend>
+  <exec_depend>depthimage_to_laserscan</exec_depend>
   <exec_depend>nav2_map_server</exec_depend>
   <exec_depend>nav2_lifecycle_manager</exec_depend>
   <exec_depend>rviz2</exec_depend>
