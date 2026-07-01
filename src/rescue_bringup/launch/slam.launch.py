@@ -74,12 +74,67 @@ def generate_launch_description():
         condition=IfCondition(launch_lidar),
     )
 
-    # ── 3. slam_toolbox (lifecycle node) ─────────────────────────
-    # slam_toolbox es un LifecycleNode — necesita ser configurado y
-    # activado externamente. use_lifecycle_manager: true indica que
-    # esperará al slam_lifecycle_manager para transicionar.
-    slam_node = TimerAction(
+    # ── 3a. depthimage_to_laserscan — depth cámara → scan 2D frontal ─────────
+    # Convierte la imagen de profundidad de la Astra a un LaserScan virtual
+    # al mismo plano horizontal que el LiDAR. Cubre el frente del robot donde
+    # el LiDAR trasero tiene ángulo muerto o zona de sombra.
+    depth_to_scan_node = TimerAction(
         period=5.0,
+        actions=[
+            Node(
+                package='depthimage_to_laserscan',
+                executable='depthimage_to_laserscan_node',
+                name='depth_to_laserscan',
+                output='screen',
+                parameters=[{
+                    'scan_height':  5,
+                    'range_min':    0.10,
+                    'range_max':    4.0,
+                    'output_frame': 'camera_link',
+                }],
+                remappings=[
+                    ('depth',             '/camera/depth/image_raw'),
+                    ('depth_camera_info', '/camera/depth/camera_info'),
+                    ('scan',              '/camera/scan'),
+                ],
+            )
+        ],
+    )
+
+    # ── 3b. scan_merger — fusiona LiDAR (trasero) + cámara (frontal) ─────────
+    # Transforma ambos scans a base_footprint y combina en /scan_merged.
+    # Resultado: cobertura 360° cooperativa sin punto ciego frontal.
+    scan_merger_node = TimerAction(
+        period=5.5,
+        actions=[
+            Node(
+                package='rescue_bringup',
+                executable='scan_merger',
+                name='scan_merger',
+                output='screen',
+                parameters=[{
+                    'lidar_topic':     '/ldlidar_node/scan',
+                    'camera_topic':    '/camera/scan',
+                    'output_topic':    '/scan_merged',
+                    'target_frame':          'base_footprint',
+                    'angle_min':             -3.14159,
+                    'angle_max':              3.14159,
+                    'angle_increment':        0.00873,
+                    'range_min':              0.10,
+                    'range_max':             12.0,
+                    # Filtro brazo: ignorar cono 310°→0°→30° del LiDAR
+                    # Solo se usan rayos en el arco 30°–310° (lados + atrás)
+                    'lidar_valid_min_deg':   30.0,
+                    'lidar_valid_max_deg':  310.0,
+                }],
+            )
+        ],
+    )
+
+    # ── 3c. slam_toolbox ─────────────────────────────────────────────────────
+    # Usa /scan_merged: LiDAR trasero + scan virtual de cámara frontal.
+    slam_node = TimerAction(
+        period=6.5,
         actions=[
             Node(
                 package='slam_toolbox',
@@ -88,7 +143,7 @@ def generate_launch_description():
                 output='screen',
                 parameters=[{
                     'use_sim_time': False,
-                    'scan_topic': '/ldlidar_node/scan',
+                    'scan_topic': '/scan_merged',
                     'odom_frame': 'odom',
                     'map_frame': 'map',
                     'base_frame': 'base_footprint',
@@ -110,16 +165,15 @@ def generate_launch_description():
                     'stack_size_to_use': 40000000,
                 }],
                 remappings=[
-                    ('/scan', '/ldlidar_node/scan'),
+                    ('/scan', '/scan_merged'),
                 ],
             )
         ],
     )
 
     # ── 4. Activación lifecycle para slam_toolbox ─────────────────
-    # Evita depender de nav2_lifecycle_manager en el PC de mando.
     configure_slam = TimerAction(
-        period=6.5,
+        period=8.0,
         actions=[
             ExecuteProcess(
                 cmd=['ros2', 'lifecycle', 'set', '/slam_toolbox', 'configure'],
@@ -128,7 +182,7 @@ def generate_launch_description():
         ],
     )
     activate_slam = TimerAction(
-        period=8.0,
+        period=9.5,
         actions=[
             ExecuteProcess(
                 cmd=['ros2', 'lifecycle', 'set', '/slam_toolbox', 'activate'],
@@ -289,6 +343,8 @@ def generate_launch_description():
         robot_description_launch,
         lidar_launch,
         camera_launch,
+        depth_to_scan_node,
+        scan_merger_node,
         slam_node,
         configure_slam,
         activate_slam,

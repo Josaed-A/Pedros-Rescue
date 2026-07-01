@@ -19,7 +19,8 @@
 
   <xacro:property name="lidar_radius"     value="0.04"/>   <!-- radio cilindro lidar [m] -->
   <xacro:property name="lidar_height"     value="0.04"/>   <!-- alto lidar [m] -->
-  <xacro:property name="lidar_z_offset"   value="0.10"/>   <!-- altura desde tope de cuerpo [m] -->
+  <xacro:property name="tower_height"     value="0.30"/>   <!-- altura torre trasera [m] -->
+  <xacro:property name="lidar_x_offset"   value="-0.13"/>  <!-- LiDAR en parte trasera del robot [m] -->
 
   <!-- ── Materiales ── -->
   <material name="dark_gray"><color rgba="0.2 0.2 0.2 1.0"/></material>
@@ -108,33 +109,6 @@
   <xacro:wheel name="right" y_offset="${-wheel_sep/2}"/>
 
   <!-- ══════════════════════════════════════════════
-       RUEDA LOCA DELANTERA (caster)
-       ══════════════════════════════════════════════ -->
-  <link name="caster_link">
-    <visual>
-      <geometry>
-        <sphere radius="${wheel_radius*0.5}"/>
-      </geometry>
-      <material name="black"/>
-    </visual>
-    <collision>
-      <geometry>
-        <sphere radius="${wheel_radius*0.5}"/>
-      </geometry>
-    </collision>
-    <inertial>
-      <mass value="0.2"/>
-      <inertia ixx="0.001" ixy="0" ixz="0" iyy="0.001" iyz="0" izz="0.001"/>
-    </inertial>
-  </link>
-
-  <joint name="caster_joint" type="fixed">
-    <parent link="base_link"/>
-    <child  link="caster_link"/>
-    <origin xyz="${base_length/2 - 0.05} 0 ${-base_height/2 - wheel_radius*0.5}" rpy="0 0 0"/>
-  </joint>
-
-  <!-- ══════════════════════════════════════════════
        LIDAR — LDRobot LD19
        frame_id debe coincidir con ldlidar.yaml → 'ldlidar_link'
        ══════════════════════════════════════════════ -->
@@ -157,12 +131,36 @@
     </inertial>
   </link>
 
-  <joint name="ldlidar_joint" type="fixed">
+  <!-- torre visual debajo del lidar -->
+  <link name="lidar_tower_link">
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <cylinder radius="0.015" length="${tower_height}"/>
+      </geometry>
+      <material name="dark_gray"/>
+    </visual>
+    <inertial>
+      <mass value="0.05"/>
+      <inertia ixx="0.0001" ixy="0" ixz="0" iyy="0.0001" iyz="0" izz="0.0001"/>
+    </inertial>
+  </link>
+
+  <joint name="lidar_tower_joint" type="fixed">
     <parent link="base_link"/>
-    <child  link="ldlidar_link"/>
-    <!-- centrado en la parte superior del cuerpo + offset de altura -->
-    <origin xyz="0 0 ${base_height/2 + lidar_z_offset + lidar_height/2}" rpy="0 0 0"/>
+    <child  link="lidar_tower_link"/>
+    <!-- torre en la cara trasera, sobre la superficie superior del cuerpo -->
+    <origin xyz="${lidar_x_offset} 0 ${base_height/2 + tower_height/2}" rpy="0 0 0"/>
   </joint>
+
+  <joint name="ldlidar_joint" type="fixed">
+    <parent link="lidar_tower_link"/>
+    <child  link="ldlidar_link"/>
+    <!-- LiDAR en el tope de la torre -->
+    <origin xyz="0 0 ${tower_height/2 + lidar_height/2}" rpy="0 0 ${pi}"/>
+  </joint>
+  <!-- rpy="0 0 pi": el conector USB del LD19 apunta hacia el frente,
+       rotarlo 180° pone el eje de escaneo correctamente alineado con base_footprint -->
 
   <!-- ══════════════════════════════════════════════
        CÁMARA — Orbbec (RGB-D)
@@ -185,9 +183,8 @@
   <joint name="camera_joint" type="fixed">
     <parent link="base_link"/>
     <child  link="camera_link"/>
-    <!-- Cara delantera: x = base_length/2 + mitad caja cámara, altura original -->
-    <origin xyz="${base_length/2 + 0.02} 0 ${base_height/2 + 0.05}"
-            rpy="0 0.261 0"/>  <!-- 15° pitch down = 0.261 rad -->
+    <!-- Montada en la cara frontal, centrada verticalmente, mirando hacia adelante -->
+    <origin xyz="${base_length/2 + 0.02} 0 0" rpy="0 0 0"/>
   </joint>
 
   <!-- optical frame (convención ROS: x=right, y=down, z=forward) -->
