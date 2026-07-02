@@ -1,23 +1,51 @@
 import cv2
+import zxingcpp
+
+_QR_FORMAT = zxingcpp.BarcodeFormat.QRCode
 
 
 class QrDetector:
-    def __init__(self):
-        self.detector = cv2.QRCodeDetector()
+    """QR detector basado en zxing-cpp — mucho más resiliente que
+    cv2.QRCodeDetector ante ángulo/perspectiva, baja resolución y códigos
+    parcialmente cortados. try_rotate/try_downscale/try_invert (todos
+    activos por defecto) cubren rotación arbitraria, distancia y contraste
+    invertido; el reintento con upscale cubre códigos pequeños/lejanos.
+    """
+
+    def _decode(self, gray):
+        return [
+            r for r in zxingcpp.read_barcodes(gray, formats=_QR_FORMAT)
+            if r.valid and r.text
+        ]
 
     def detect_and_annotate(self, frame):
-        data, bbox, _ = self.detector.detectAndDecode(frame)
+        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
 
-        if not data or bbox is None or len(bbox) == 0:
+        results = self._decode(gray)
+        scale = 1.0
+        if not results:
+            # Reintento con upscale: ayuda con códigos pequeños/lejanos que
+            # zxing-cpp no reconstruye a resolución nativa (solo hace
+            # downscale automático, nunca upscale).
+            scale = 2.0
+            big = cv2.resize(gray, None, fx=scale, fy=scale, interpolation=cv2.INTER_CUBIC)
+            results = self._decode(big)
+
+        if not results:
             return frame, ''
 
-        points = bbox[0].astype(int)
-        point_count = len(points)
+        result = results[0]
+        data = result.text
+        pos = result.position
+        points = [
+            (int(pos.top_left.x / scale), int(pos.top_left.y / scale)),
+            (int(pos.top_right.x / scale), int(pos.top_right.y / scale)),
+            (int(pos.bottom_right.x / scale), int(pos.bottom_right.y / scale)),
+            (int(pos.bottom_left.x / scale), int(pos.bottom_left.y / scale)),
+        ]
 
-        for index in range(point_count):
-            start = tuple(points[index])
-            end = tuple(points[(index + 1) % point_count])
-            cv2.line(frame, start, end, (0, 255, 0), 3)
+        for index in range(4):
+            cv2.line(frame, points[index], points[(index + 1) % 4], (0, 255, 0), 3)
 
         cv2.putText(
             frame,
