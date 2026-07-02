@@ -72,8 +72,8 @@ class GeotiffWriter(Node):
             raise RuntimeError('Pillow requerido')
 
         # Parámetros
-        self.declare_parameter('output_dir',  '/root/maps')
-        self.declare_parameter('team_name',   'PedrosRescue')
+        self.declare_parameter('output_dir',  '/workspace/maps')
+        self.declare_parameter('team_name',   'SabanaHerons')
         self.declare_parameter('mission',     'M1')
         self.declare_parameter('path_step_m', 0.08)   # m mínimos entre muestras de ruta
 
