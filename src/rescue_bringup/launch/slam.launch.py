@@ -29,7 +29,6 @@ from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
 from launch.actions import (
     DeclareLaunchArgument,
-    ExecuteProcess,
     IncludeLaunchDescription,
     TimerAction,
 )
@@ -51,6 +50,7 @@ def generate_launch_description():
     output_dir        = LaunchConfiguration('output_dir')
 
     pkg_bringup = get_package_share_directory('rescue_bringup')
+    slam_params = os.path.join(pkg_bringup, 'config', 'slam_toolbox_params.yaml')
 
     # ── 1. Descripción del robot + TF tree ───────────────────────
     robot_description_launch = IncludeLaunchDescription(
@@ -133,6 +133,11 @@ def generate_launch_description():
 
     # ── 3c. slam_toolbox ─────────────────────────────────────────────────────
     # Usa /scan_merged: LiDAR trasero + scan virtual de cámara frontal.
+    # La configuración vive en config/slam_toolbox_params.yaml (fuente única de
+    # verdad). Aquí solo se sobreescribe lo que depende del launch.
+    # Con use_lifecycle_manager:=false el nodo async se auto-configura y
+    # auto-activa (patrón estándar de slam_toolbox online_async), por lo que NO
+    # se llama a `ros2 lifecycle set` manualmente.
     slam_node = TimerAction(
         period=6.5,
         actions=[
@@ -141,52 +146,13 @@ def generate_launch_description():
                 executable='async_slam_toolbox_node',
                 name='slam_toolbox',
                 output='screen',
-                parameters=[{
-                    'use_sim_time': False,
-                    'scan_topic': '/scan_merged',
-                    'odom_frame': 'odom',
-                    'map_frame': 'map',
-                    'base_frame': 'base_footprint',
-                    'mode': 'mapping',
-                    'use_map_saver': False,
-                    'use_lifecycle_manager': False,
-                    'debug_logging': False,
-                    'resolution': 0.05,
-                    'max_laser_range': 12.0,
-                    'transform_timeout': 0.5,
-                    'tf_buffer_duration': 30.0,
-                    'minimum_travel_distance': 0.0,
-                    'minimum_travel_heading': 0.0,
-                    'map_update_interval': 1.0,
-                    'throttle_scans': 1,
-                    'correlation_search_space_dimension': 2.0,
-                    'correlation_search_space_resolution': 0.01,
-                    'correlation_search_space_smear_deviation': 0.1,
-                    'stack_size_to_use': 40000000,
-                }],
-                remappings=[
-                    ('/scan', '/scan_merged'),
+                parameters=[
+                    slam_params,
+                    {
+                        'use_sim_time': use_sim_time,
+                        'scan_topic': '/scan_merged',
+                    },
                 ],
-            )
-        ],
-    )
-
-    # ── 4. Activación lifecycle para slam_toolbox ─────────────────
-    configure_slam = TimerAction(
-        period=8.0,
-        actions=[
-            ExecuteProcess(
-                cmd=['ros2', 'lifecycle', 'set', '/slam_toolbox', 'configure'],
-                output='screen',
-            )
-        ],
-    )
-    activate_slam = TimerAction(
-        period=9.5,
-        actions=[
-            ExecuteProcess(
-                cmd=['ros2', 'lifecycle', 'set', '/slam_toolbox', 'activate'],
-                output='screen',
             )
         ],
     )
@@ -268,9 +234,9 @@ def generate_launch_description():
                     'mission':       'M1',
                     'robot_name':    'Pedro',
                     'mode':          'T',
-                    'yolo_model':    'yolov8n.pt',
+                    'yolo_model':    '/workspace/src/rescue_bringup/models/mission_objects_yolo.pt',
                     'hazmat_model':  hazmat_model_path,
-                    'hazmat_conf':   0.40,
+                    'hazmat_conf':   0.65,
                     'enable_yolo':   True,
                     'enable_apriltag': True,
                     'enable_hazmat': True,
@@ -347,8 +313,6 @@ def generate_launch_description():
         depth_to_scan_node,
         scan_merger_node,
         slam_node,
-        configure_slam,
-        activate_slam,
         pc_accum_node,
         geotiff_node,
         detector_node,

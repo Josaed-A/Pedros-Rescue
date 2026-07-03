@@ -25,3 +25,19 @@ yolov8m.pt
 # El modelo entrenado final SÍ va en git (src/rescue_bringup/models/hazmat_yolo.pt)
 # para no ignorarlo accidentalmente:
 !src/rescue_bringup/models/
+
+# Backups de modelos (el modelo activo sí se versiona; los *_backup.pt no)
+src/rescue_bringup/models/*_backup.pt
+
+# Logs de pruebas / depuración
+*.log
+
+# Imágenes de diagnóstico generadas en pruebas
+diag_*.jpg
+
+# Salidas de misión generadas (mapas, PLY, GeoTIFF, CSV)
+salida/
+
+# Pesos / modelos base descargados (grandes; se distribuyen fuera de git)
+weights/
+yolov8s-worldv2.pt

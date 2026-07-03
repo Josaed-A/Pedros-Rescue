@@ -50,7 +50,11 @@ def _pc2_to_xyz_rgb(msg: PointCloud2) -> Tuple[np.ndarray, Optional[np.ndarray]]
 
     def _col(name):
         off = fields[name].offset
-        return raw[:, off:off+4].view(np.float32).reshape(-1)
+        # raw[:, off:off+4] es un slice NO contiguo (stride = point_step); un
+        # .view(float32) directo falla con "ndarray is not contiguous" en varias
+        # versiones de NumPy → la nube nunca se decodifica. ascontiguousarray lo
+        # copia a un bloque contiguo antes de reinterpretar los bytes.
+        return np.ascontiguousarray(raw[:, off:off+4]).view(np.float32).reshape(-1)
 
     x, y, z = _col('x'), _col('y'), _col('z')
     xyz = np.stack([x, y, z], axis=-1)
@@ -366,6 +370,19 @@ class PointCloudAccumulator(Node):
             self.get_logger().error(resp.message)
         return resp
 
+    def save_on_shutdown(self) -> None:
+        """Exporta el PLY al cerrar el nodo (Ctrl-C) para no perder el mapa 3D
+        si el operador olvida llamar al servicio /save_pointcloud_ply."""
+        if len(self._xyz) == 0:
+            self.get_logger().warn('Cierre sin puntos acumulados — no se guarda PLY')
+            return
+        try:
+            path = self._export_ply()
+            self.get_logger().info(
+                f'PLY auto-guardado al cerrar → {path}  ({len(self._xyz):,} puntos)')
+        except Exception as exc:
+            self.get_logger().error(f'Auto-guardado PLY falló: {exc}')
+
     def _export_ply(self) -> str:
         v     = self.get_parameter('voxel_size').value
         xyz, rgb = _voxel_filter(self._xyz.copy(), self._rgb, v)
@@ -414,6 +431,7 @@ def main(args=None):
     except KeyboardInterrupt:
         pass
     finally:
+        node.save_on_shutdown()
         try:
             node.destroy_node()
         except KeyboardInterrupt:

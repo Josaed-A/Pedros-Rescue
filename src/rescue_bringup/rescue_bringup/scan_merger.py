@@ -61,6 +61,11 @@ class ScanMerger(Node):
         self.declare_parameter('lidar_valid_min_deg',  30.0)   # 30°
         self.declare_parameter('lidar_valid_max_deg', 310.0)   # 310°
 
+        # Edad máxima de un scan para considerarlo "en vivo" (s). Si el LiDAR o
+        # la cámara se cuelgan, dejamos de usar su último scan en vez de
+        # republicarlo con timestamp fresco (escena congelada = mapa corrupto).
+        self.declare_parameter('max_scan_age', 0.3)
+
         self._tf_buf      = tf2_ros.Buffer()
         self._tf_listener = tf2_ros.TransformListener(self._tf_buf, self)
 
@@ -115,11 +120,21 @@ class ScanMerger(Node):
             except TransformException:
                 return []
 
-        tx  = t.transform.translation.x
-        ty  = t.transform.translation.y
-        qz  = t.transform.rotation.z
-        qw  = t.transform.rotation.w
-        yaw = 2.0 * math.atan2(qz, qw)
+        tx = t.transform.translation.x
+        ty = t.transform.translation.y
+        qx = t.transform.rotation.x
+        qy = t.transform.rotation.y
+        qz = t.transform.rotation.z
+        qw = t.transform.rotation.w
+
+        # Matriz de rotación completa (no solo yaw): el frame óptico de la
+        # cámara suele tener roll/pitch, así que una extracción yaw-only
+        # desalinearía su scan. Cada rayo es un punto (lx, ly, 0) en el frame
+        # del sensor; lo rotamos en 3D y proyectamos a XY de target_frame.
+        r00 = 1.0 - 2.0 * (qy * qy + qz * qz)
+        r01 = 2.0 * (qx * qy - qz * qw)
+        r10 = 2.0 * (qx * qy + qz * qw)
+        r11 = 1.0 - 2.0 * (qx * qx + qz * qz)
 
         use_filter = (angle_filter_min is not None and
                       angle_filter_max is not None)
@@ -140,16 +155,37 @@ class ScanMerger(Node):
 
             lx = r * math.cos(local_angle)
             ly = r * math.sin(local_angle)
-            bx = tx + lx * math.cos(yaw) - ly * math.sin(yaw)
-            by = ty + lx * math.sin(yaw) + ly * math.cos(yaw)
+            # lz = 0 → las columnas r02/r12 no aportan
+            bx = tx + r00 * lx + r01 * ly
+            by = ty + r10 * lx + r11 * ly
             points.append((bx, by))
 
         return points
 
     # ── Publicación del scan fusionado ────────────────────────────
 
+    def _fresh(self, scan, now, max_age):
+        """Devuelve scan si es reciente; None si es viejo o inexistente.
+        Un stamp en cero (algunos drivers no lo rellenan) se acepta como válido.
+        """
+        if scan is None:
+            return None
+        stamp = scan.header.stamp
+        if stamp.sec == 0 and stamp.nanosec == 0:
+            return scan
+        age = (now - rclpy.time.Time.from_msg(stamp)).nanoseconds * 1e-9
+        return scan if age <= max_age else None
+
     def _publish_merged(self):
-        if self._lidar_scan is None:
+        now     = self.get_clock().now()
+        max_age = self.get_parameter('max_scan_age').value
+
+        # Descartar scans obsoletos: si un sensor se cuelga no republicamos su
+        # última foto como si fuera en vivo.
+        lidar_scan  = self._fresh(self._lidar_scan,  now, max_age)
+        camera_scan = self._fresh(self._camera_scan, now, max_age)
+
+        if lidar_scan is None:
             return
 
         target = self.get_parameter('target_frame').value
@@ -168,13 +204,13 @@ class ScanMerger(Node):
 
         # 1. LiDAR con filtro angular (excluye cono del brazo)
         for (bx, by) in self._scan_to_points(
-                self._lidar_scan, target,
+                lidar_scan, target,
                 angle_filter_min=lf_min, angle_filter_max=lf_max):
             self._insert_point(bx, by, ranges, a_min, a_inc, n_bins, r_min, r_max)
 
         # 2. Cámara sin filtro (cubre el frente donde el LiDAR está ciego)
-        if self._camera_scan is not None:
-            for (bx, by) in self._scan_to_points(self._camera_scan, target):
+        if camera_scan is not None:
+            for (bx, by) in self._scan_to_points(camera_scan, target):
                 self._insert_point(bx, by, ranges, a_min, a_inc, n_bins, r_min, r_max)
 
         out = LaserScan()
@@ -187,7 +223,9 @@ class ScanMerger(Node):
         out.scan_time       = 0.05
         out.range_min       = r_min
         out.range_max       = r_max
-        out.ranges          = [r if math.isfinite(r) else 0.0 for r in ranges]
+        # Rayos sin retorno se dejan en +inf (convención LaserScan). Poner 0.0
+        # los interpretaría como impactos pegados al robot → falsos obstáculos.
+        out.ranges          = ranges
 
         self._pub.publish(out)
 

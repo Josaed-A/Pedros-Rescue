@@ -47,6 +47,7 @@ RUN apt-get update && apt-get install -y \
     ros-jazzy-openni2-camera \
     ros-jazzy-v4l2-camera \
     ros-jazzy-depth-image-proc \
+    ros-jazzy-depthimage-to-laserscan \
     ros-jazzy-image-proc \
     libgflags-dev \
     nlohmann-json3-dev \

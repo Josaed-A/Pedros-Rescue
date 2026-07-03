@@ -176,6 +176,18 @@ class GeotiffWriter(Node):
             self.get_logger().error(resp.message)
         return resp
 
+    def save_on_shutdown(self) -> None:
+        """Genera el GeoTIFF al cerrar el nodo (Ctrl-C) para no perder el mapa
+        2D si el operador olvida llamar al servicio /save_geotiff."""
+        if self._map is None:
+            self.get_logger().warn('Cierre sin datos de mapa — no se guarda GeoTIFF')
+            return
+        try:
+            path = self._build_geotiff()
+            self.get_logger().info(f'GeoTIFF auto-guardado al cerrar → {path}')
+        except Exception as exc:
+            self.get_logger().error(f'Auto-guardado GeoTIFF falló: {exc}')
+
     # ─── Utilidades de coordenadas ─────────────────────────────────
 
     def _world_to_px(self, wx: float, wy: float, info,
@@ -403,6 +415,7 @@ def main(args=None):
     except KeyboardInterrupt:
         pass
     finally:
+        node.save_on_shutdown()
         try:
             node.destroy_node()
         except KeyboardInterrupt:
