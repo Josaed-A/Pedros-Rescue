@@ -60,9 +60,9 @@ def generate_launch_description():
                     'enable_apriltag':   True,
                     'enable_hazmat':     True,
                     'enable_yolo':       enable_yolo,
-                    'yolo_model':        'yolov8n.pt',
+                    'yolo_model':        '/workspace/src/rescue_bringup/models/mission_objects_yolo.pt',
                     'hazmat_model':      hazmat_model,
-                    'hazmat_conf':       0.40,
+                    'hazmat_conf':       0.65,
                 }],
             )
         ],

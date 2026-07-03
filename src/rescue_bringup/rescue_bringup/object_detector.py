@@ -4,7 +4,7 @@ object_detector.py
 Detecta objetos de interés RoboCup Rescue 2026 y genera el CSV de detecciones.
 
 Detectores implementados:
-  1. AprilTag Standard41h12 → tipo 'ar_code'        (1 pt)
+  1. AprilTag tagStandard41h12 → tipo 'ar_code'        (1 pt)
   2. Hazmat signs via YOLO custom (49 clases) → tipo 'hazmat_sign'  (2 pts)
      Fallback: detector HSV (naranja) si no hay modelo entrenado.
   3. Objetos físicos via YOLO (ultralytics): → tipo 'real_object'  (10 pts)
@@ -35,6 +35,7 @@ from typing import Dict, List, Optional, Tuple
 import numpy as np
 import rclpy
 from rclpy.node import Node
+from rclpy.qos import QoSHistoryPolicy, QoSProfile, QoSReliabilityPolicy
 from sensor_msgs.msg import Image, CameraInfo, CompressedImage
 from std_msgs.msg import String as StringMsg
 from std_srvs.srv import Trigger
@@ -59,31 +60,47 @@ try:
 except ImportError:
     _YOLO_OK = False
 
+try:
+    # OpenCV (cv2.aruco) NO soporta la familia tagStandard41h12 — solo
+    # 16h5/25h9/36h10/36h11 y variantes ArUco. pupil-apriltags usa la
+    # librería oficial AprilTag en C, que sí la reconoce.
+    from pupil_apriltags import Detector as _AprilTagDetector
+    _APRILTAG_OK = True
+except ImportError:
+    _APRILTAG_OK = False
 
-# ── Objetos YOLO que consideramos "objetos de misión" ─────────────────────────
-# Claves: nombre COCO → nombre display para CSV
-YOLO_TARGET_CLASSES: Dict[str, str] = {
-    'backpack':         'Backpack',
-    'handbag':          'Bag',
-    'suitcase':         'Suitcase',
-    'fire hydrant':     'FireHydrant',
-    'bottle':           'Bottle',
-    'person':           'Victim',
-    'teddy bear':       'Doll',
-    'sports ball':      'Ball',
-    'chair':            'Chair',
-    'cell phone':       'Phone',
-}
 
-# Umbral de confianza YOLO
-YOLO_CONF = 0.50
+# ── Objetos de misión RoboCup Rescue 2026 ──────────────────────────────────
+# No existen en el vocabulario COCO (80 clases), así que se entrenó un
+# yolov8s custom (mission_objects_yolo.pt, ver training/train_mission.py o
+# el kernel de Kaggle) combinando datasets públicos de Roboflow. Sus 6
+# clases ya vienen exactamente con estos nombres — no hace falta mapeo.
+#
+# OJO — confiabilidad real por clase según el entrenamiento (ver
+# runs/mission_objects/confusion_matrix.png del run de Kaggle):
+#   Gloves, FireExtinguisher     → miles de ejemplos, funcionan bien.
+#   HardHat                     → 10k+ ejemplos de train pero el split de
+#                                  validación quedó vacío — sin confirmar.
+#   PowerCable, FuelCan          → decenas de ejemplos, poco confiables.
+#   Rope                        → CERO datos (el dataset fuente solo tenía
+#                                  una clase "hang" que no matcheó "rope",
+#                                  y el dataset de respaldo falló al bajar).
+#                                  Este modelo NUNCA va a detectar cuerdas.
+MISSION_OBJECT_CLASSES = {'Rope', 'Gloves', 'HardHat', 'PowerCable', 'FuelCan', 'FireExtinguisher'}
+
+# Umbral de confianza para el modelo de objetos de misión (custom, entrenado
+# con datos reales — no zero-shot, así que no necesita el umbral tan bajo
+# que hacía falta con YOLO-World).
+YOLO_CONF = 0.35
 
 # Rango válido del sensor de profundidad (m)
 DEPTH_MIN = 0.3
 DEPTH_MAX = 4.0
 
-# Deduplicación: si una detección del mismo tipo está a < DEDUP_DIST m → misma
-DEDUP_DIST = 0.5   # m
+# Deduplicación: si una detección del mismo tipo/nombre está a < DEDUP_DIST m
+# Y fue vista hace menos de DEDUP_COOLDOWN s → se considera la misma.
+DEDUP_DIST = 0.5      # m
+DEDUP_COOLDOWN = 15.0  # s
 
 # Intervalo de detección (segundos) — no procesar cada frame
 DETECT_INTERVAL = 0.5   # s
@@ -93,6 +110,89 @@ HAZMAT_H_LO, HAZMAT_H_HI = 8, 22    # matiz (0-180 en OpenCV)
 HAZMAT_S_LO = 120                    # saturación mínima
 HAZMAT_V_LO = 100                    # brillo mínimo
 HAZMAT_AREA_MIN = 500                # área mínima en píxeles²
+
+# ── Consolidación de clases hazmat ─────────────────────────────────────────
+# hazmat_yolo.pt ahora es el modelo curado de 13 clases (hazmat13, entrenado
+# directo sobre las señales RoboCup Rescue 2026 — nombres ya casi exactos,
+# ej. 'Flammable Gas', 'Dangerous', 'Non-flammable Gas'). Se mantienen
+# también las variantes del modelo público viejo de 49 clases (plurales,
+# sinónimos) por si se vuelve a usar hazmat_yolo_49class_backup.pt.
+# Claves en minúscula, sin guiones (normalizados antes del lookup).
+HAZMAT_CLASS_MAP: Dict[str, str] = {
+    'poison':                                                                     'Poison',
+    'poisons':                                                                    'Poison',
+    'toxins':                                                                     'Poison',
+    # Mismo pictograma (llama sobre círculo) que "Oxidizer"
+    'oxygen':                                                                     'Oxygen',
+    '011_oxidizer':                                                               'Oxygen',
+    'oxidizer':                                                                   'Oxygen',
+    'oxidizing substances':                                                       'Oxygen',
+    'oxidising agents':                                                           'Oxygen',
+    'flammable gas':                                                              'FlammableGas',
+    'flammable gases':                                                            'FlammableGas',
+    'flammable solid':                                                            'FlammableSolid',
+    'flammable solids':                                                           'FlammableSolid',
+    'corrosive':                                                                  'Corrosive',
+    'dangerous':                                                                  'Dangerous',
+    'dangerous when wet':                                                         'Dangerous',
+    'non flammable gas':                                                          'NonFlammableGas',
+    'nonflammable gas':                                                           'NonFlammableGas',
+    'nonflammable gases':                                                         'NonFlammableGas',
+    'organic peroxide':                                                           'OrganicPeroxide',
+    'organic peroxides':                                                          'OrganicPeroxide',
+    'organic peroxids':                                                           'OrganicPeroxide',
+    'explosive':                                                                  'Explosive',
+    'explosives':                                                                 'Explosive',
+    'explosive substances':                                                       'Explosive',
+    'explosives products considered extremely insensitive with no risk to create a mass explosion': 'Explosive',
+    'explosives products considered very insensitive that are used as blasting agents':              'Explosive',
+    'explosives products with no significant risk of creating a blast':           'Explosive',
+    'explosives products with the potential to create a fire or minor blast':     'Explosive',
+    'explosives products with the potential to create a mass explosion':          'Explosive',
+    'explosives products with the potential to create a projectile hazard':       'Explosive',
+    'radioactive':                                                                'Radioactive',
+    'inhalation hazard':                                                          'InhalationHazard',
+    'spontaneously combustible':                                                  'SpontaneouslyCombustible',
+    'spontaneously combustible material':                                         'SpontaneouslyCombustible',
+    'infectious substance':                                                       'InfectiousSubstance',
+    'infectous substance':                                                        'InfectiousSubstance',  # typo del dataset
+}
+
+
+# pupil-apriltags expone decision_margin (a mayor valor, patrón más nítido/
+# confiable) — filtra ruido de fondo sin necesidad de ajustar a ciegas
+# parámetros de binarización como con cv2.aruco.
+APRILTAG_MIN_DECISION_MARGIN = 30.0
+
+# hazmat_yolo.pt es un modelo chico entrenado con dataset limitado y confunde
+# fácil: una cara con "Explosive", el azul sólido de un guante con "Dangerous
+# when wet" (diamante azul), etc. Un rótulo hazmat nunca puede ser una
+# persona ni otro objeto de misión ya identificado, así que se descarta si
+# se superpone mucho con cualquiera de los dos.
+HAZMAT_OVERLAP_MAX = 0.3
+
+
+def _box_overlap_ratio(a: dict, b: dict) -> float:
+    """Fracción del área de 'a' que cae dentro de 'b' (no IoU simétrico:
+    nos importa si el cuadro chico del hazmat cae DENTRO del otro)."""
+    ax1, ay1, ax2, ay2 = a['x1'], a['y1'], a['x2'], a['y2']
+    bx1, by1, bx2, by2 = b['x1'], b['y1'], b['x2'], b['y2']
+    ix1, iy1 = max(ax1, bx1), max(ay1, by1)
+    ix2, iy2 = min(ax2, bx2), min(ay2, by2)
+    inter = max(0, ix2 - ix1) * max(0, iy2 - iy1)
+    area_a = max(1, (ax2 - ax1) * (ay2 - ay1))
+    return inter / area_a
+
+
+def _filter_hazmat_near_people(detections: List[dict], person_boxes: List[dict]) -> List[dict]:
+    other_boxes = person_boxes + [d for d in detections if d['type'] == 'real_object']
+    if not other_boxes:
+        return detections
+    return [
+        d for d in detections
+        if not (d['type'] == 'hazmat_sign' and
+                any(_box_overlap_ratio(d, o) > HAZMAT_OVERLAP_MAX for o in other_boxes))
+    ]
 
 
 class ObjectDetector(Node):
@@ -107,9 +207,10 @@ class ObjectDetector(Node):
         self.declare_parameter('country',        'Colombia')
         self.declare_parameter('robot_name',     'Pedro')
         self.declare_parameter('mode',           'T')
-        self.declare_parameter('yolo_model',     'yolov8n.pt')
+        self.declare_parameter('yolo_model',
+                                '/workspace/src/rescue_bringup/models/mission_objects_yolo.pt')
         self.declare_parameter('hazmat_model',   '')
-        self.declare_parameter('hazmat_conf',    0.40)
+        self.declare_parameter('hazmat_conf',    0.65)
         self.declare_parameter('enable_yolo',    True)
         self.declare_parameter('enable_apriltag', True)
         self.declare_parameter('enable_hazmat',  True)
@@ -148,6 +249,7 @@ class ObjectDetector(Node):
         # Detecciones acumuladas: lista de dicts
         self._detections: List[dict] = []
         self._det_counter = 0
+        self._last_logged_at: Dict[Tuple[str, str], float] = {}
 
         # Hora de inicio de misión
         self._start_time: Optional[datetime.datetime] = None
@@ -157,32 +259,38 @@ class ObjectDetector(Node):
         self._tf_buf = tf2_ros.Buffer()
         self._tf_listener = tf2_ros.TransformListener(self._tf_buf, self)
 
-        # AprilTag detector (OpenCV aruco)
-        # DICT_APRILTAG_41h12 = 21 (some OpenCV ARM builds omit the named constant)
-        _APRILTAG_DICT = getattr(cv2.aruco, 'DICT_APRILTAG_41h12', 21)
-        self._aruco_detector = None
-        if _CV2_OK and self.get_parameter('enable_apriltag').value:
-            try:
-                aruco_dict = cv2.aruco.getPredefinedDictionary(_APRILTAG_DICT)
-                params = cv2.aruco.DetectorParameters()
-                self._aruco_detector = cv2.aruco.ArucoDetector(aruco_dict, params)
-                self.get_logger().info('AprilTag detector (41h12) activo')
-            except AttributeError:
-                # OpenCV < 4.7: API antigua
-                self._aruco_dict = cv2.aruco.Dictionary_get(_APRILTAG_DICT)
-                self._aruco_params = cv2.aruco.DetectorParameters_create()
-                self._aruco_detector = 'legacy'
-                self.get_logger().info('AprilTag detector (41h12 legacy API) activo')
+        # AprilTag detector — familia real: tagStandard41h12.
+        # OJO: OpenCV (cv2.aruco) NO soporta esta familia bajo ningún nombre
+        # (solo 16h5/25h9/36h10/36h11 + variantes ArUco); por eso se usa
+        # pupil-apriltags, que envuelve la librería oficial AprilTag en C.
+        self._apriltag_detector = None
+        if _APRILTAG_OK and self.get_parameter('enable_apriltag').value:
+            self._apriltag_detector = _AprilTagDetector(
+                families='tagStandard41h12', nthreads=2)
+            self.get_logger().info('AprilTag detector (tagStandard41h12) activo')
+        elif not _APRILTAG_OK and self.get_parameter('enable_apriltag').value:
+            self.get_logger().warn(
+                'pupil_apriltags no instalado — detección AprilTag desactivada. '
+                'Instala con: pip3 install pupil-apriltags')
 
-        # YOLO model (objetos COCO: personas, mochilas, etc.)
+        # YOLO model — objetos de misión (rope, gloves, hard hat, etc.),
+        # modelo custom entrenado (ver MISSION_OBJECT_CLASSES arriba).
         self._yolo = None
+        # Modelo liviano SOLO para detectar personas — no es una detección de
+        # misión, se usa exclusivamente para _filter_hazmat_near_people (el
+        # modelo custom de 6 clases no tiene clase 'person' en absoluto).
+        self._person_yolo = None
         if _YOLO_OK and self.get_parameter('enable_yolo').value:
             model_path = self.get_parameter('yolo_model').value
             try:
                 self._yolo = _YOLO(model_path)
-                self.get_logger().info(f'YOLO (objetos) cargado: {model_path}')
+                self.get_logger().info(f'YOLO (objetos de misión) cargado: {model_path}')
             except Exception as exc:
                 self.get_logger().warn(f'No se pudo cargar YOLO ({model_path}): {exc}')
+            try:
+                self._person_yolo = _YOLO('yolov8n.pt')
+            except Exception as exc:
+                self.get_logger().warn(f'No se pudo cargar YOLO (personas): {exc}')
         elif not _YOLO_OK and self.get_parameter('enable_yolo').value:
             self.get_logger().warn(
                 'ultralytics no instalado — detección YOLO desactivada. '
@@ -215,13 +323,22 @@ class ObjectDetector(Node):
         depth_topic      = self.get_parameter('depth_topic').value
         cam_info_topic   = self.get_parameter('camera_info_topic').value
 
+        # Los drivers de cámara (logitech_pub, astra_rgbd_camera_node) publican
+        # con QoS BEST_EFFORT; la QoS por defecto (RELIABLE) es incompatible y
+        # descarta silenciosamente todos los mensajes.
+        sensor_qos = QoSProfile(
+            history=QoSHistoryPolicy.KEEP_LAST,
+            depth=5,
+            reliability=QoSReliabilityPolicy.BEST_EFFORT,
+        )
+
         self.create_subscription(CameraInfo, cam_info_topic, self._on_cam_info, 5)
 
         if use_compressed:
             self.create_subscription(
-                CompressedImage, color_topic, self._on_color_compressed, 5)
+                CompressedImage, color_topic, self._on_color_compressed, sensor_qos)
             self.create_subscription(
-                CompressedImage, depth_topic, self._on_depth_compressed, 5)
+                CompressedImage, depth_topic, self._on_depth_compressed, sensor_qos)
             self.get_logger().info(
                 f'Modo COMPRESSED — color: {color_topic}  depth: {depth_topic}')
         else:
@@ -236,7 +353,7 @@ class ObjectDetector(Node):
         hazmat_mode = 'YOLO' if self._hazmat_yolo else ('HSV' if self.get_parameter('enable_hazmat').value else '✗')
         self.get_logger().info(
             'ObjectDetector activo\n'
-            '  AprilTag : ' + ('✓' if self._aruco_detector else '✗') + '\n'
+            '  AprilTag : ' + ('✓' if self._apriltag_detector else '✗') + '\n'
             '  Hazmat   : ' + hazmat_mode + '\n'
             '  YOLO obj : ' + ('✓' if self._yolo else '✗')
         )
@@ -298,19 +415,7 @@ class ObjectDetector(Node):
             return
 
         self._color_img = bgr
-        detections = []
-
-        if self._aruco_detector and self.get_parameter('enable_apriltag').value:
-            detections += self._detect_apriltags(bgr)
-
-        if self.get_parameter('enable_hazmat').value:
-            if self._hazmat_yolo:
-                detections += self._detect_hazmat_yolo(bgr)
-            else:
-                detections += self._detect_hazmat_hsv(bgr)
-
-        if self._yolo and self.get_parameter('enable_yolo').value:
-            detections += self._detect_yolo(bgr)
+        detections = self._run_detectors(bgr)
 
         self._publish_annotated_frame(bgr, detections)
 
@@ -329,9 +434,17 @@ class ObjectDetector(Node):
             return
 
         self._color_img = bgr
+        detections = self._run_detectors(bgr)
+
+        self._publish_annotated_frame(bgr, detections)
+
+        for det in detections:
+            self._process_detection(det)
+
+    def _run_detectors(self, bgr: np.ndarray) -> List[dict]:
         detections = []
 
-        if self._aruco_detector and self.get_parameter('enable_apriltag').value:
+        if self._apriltag_detector and self.get_parameter('enable_apriltag').value:
             detections += self._detect_apriltags(bgr)
 
         if self.get_parameter('enable_hazmat').value:
@@ -340,38 +453,33 @@ class ObjectDetector(Node):
             else:
                 detections += self._detect_hazmat_hsv(bgr)
 
-        if self._yolo and self.get_parameter('enable_yolo').value:
-            detections += self._detect_yolo(bgr)
+        person_boxes = []
+        if self.get_parameter('enable_yolo').value:
+            if self._yolo:
+                detections += self._detect_yolo(bgr)
+            if self._person_yolo:
+                person_boxes = self._detect_people(bgr)
 
-        self._publish_annotated_frame(bgr, detections)
-
-        for det in detections:
-            self._process_detection(det)
+        return _filter_hazmat_near_people(detections, person_boxes)
 
     # ─── Detectores ───────────────────────────────────────────────
 
     def _detect_apriltags(self, bgr: np.ndarray) -> List[dict]:
-        """Detecta AprilTags Standard41h12 y devuelve lista de dicts."""
+        """Detecta AprilTags tagStandard41h12 y devuelve lista de dicts."""
         gray = cv2.cvtColor(bgr, cv2.COLOR_BGR2GRAY)
         results = []
 
         try:
-            if self._aruco_detector == 'legacy':
-                corners, ids, _ = cv2.aruco.detectMarkers(
-                    gray, self._aruco_dict, parameters=self._aruco_params)
-            else:
-                corners, ids, _ = self._aruco_detector.detectMarkers(gray)
-
-            if ids is None:
-                return []
-
-            for i, tag_id in enumerate(ids.flatten()):
-                c = corners[i][0]
-                cx = int(c[:, 0].mean())
-                cy = int(c[:, 1].mean())
+            for det in self._apriltag_detector.detect(gray):
+                # hamming>0 = se corrigieron bits de error (lectura dudosa);
+                # decision_margin bajo = patrón débil, probable ruido de fondo.
+                if det.hamming > 0 or det.decision_margin < APRILTAG_MIN_DECISION_MARGIN:
+                    continue
+                c = det.corners
+                cx, cy = int(det.center[0]), int(det.center[1])
                 results.append({
                     'type': 'ar_code',
-                    'name': str(int(tag_id)),
+                    'name': str(int(det.tag_id)),
                     'u': cx, 'v': cy,
                     'x1': int(c[:, 0].min()), 'y1': int(c[:, 1].min()),
                     'x2': int(c[:, 0].max()), 'y2': int(c[:, 1].max()),
@@ -382,20 +490,24 @@ class ObjectDetector(Node):
         return results
 
     def _detect_hazmat_yolo(self, bgr: np.ndarray) -> List[dict]:
-        """Detecta señales hazmat con el modelo YOLO entrenado (49 clases)."""
+        """Detecta señales hazmat con el modelo YOLO entrenado (49 clases crudas,
+        consolidadas a las 13 señales RoboCup Rescue 2026 vía HAZMAT_CLASS_MAP)."""
         results_out = []
         conf = float(self.get_parameter('hazmat_conf').value)
         try:
             res = self._hazmat_yolo(bgr, conf=conf, verbose=False)
             for r in res:
                 for box in r.boxes:
-                    cls_name = self._hazmat_yolo.names[int(box.cls[0])]
+                    raw_name = self._hazmat_yolo.names[int(box.cls[0])]
+                    cls_name = HAZMAT_CLASS_MAP.get(raw_name.lower().replace('-', ' '))
+                    if cls_name is None:
+                        continue  # no es una de las 13 señales de misión
                     x1, y1, x2, y2 = box.xyxy[0].tolist()
                     cx = int((x1 + x2) / 2)
                     cy = int((y1 + y2) / 2)
                     results_out.append({
                         'type': 'hazmat_sign',
-                        'name': cls_name.replace(' ', '_')[:20],
+                        'name': cls_name,
                         'u': cx, 'v': cy,
                         'x1': int(x1), 'y1': int(y1), 'x2': int(x2), 'y2': int(y2),
                     })
@@ -444,27 +556,45 @@ class ObjectDetector(Node):
         return results
 
     def _detect_yolo(self, bgr: np.ndarray) -> List[dict]:
-        """Detecta objetos físicos con YOLO (ultralytics)."""
+        """Detecta objetos de misión con el modelo custom (6 clases, ver
+        MISSION_OBJECT_CLASSES). Sus nombres de clase ya son los nombres
+        display finales, no hace falta remapeo."""
         results_out = []
         try:
             results = self._yolo(bgr, conf=YOLO_CONF, verbose=False)
             for r in results:
                 for box in r.boxes:
-                    cls_name = self._yolo.names[int(box.cls[0])].lower()
-                    if cls_name not in YOLO_TARGET_CLASSES:
+                    cls_name = self._yolo.names[int(box.cls[0])]
+                    if cls_name not in MISSION_OBJECT_CLASSES:
                         continue
                     x1, y1, x2, y2 = box.xyxy[0].tolist()
                     cx = int((x1 + x2) / 2)
                     cy = int((y1 + y2) / 2)
                     results_out.append({
                         'type': 'real_object',
-                        'name': YOLO_TARGET_CLASSES[cls_name],
+                        'name': cls_name,
                         'u': cx, 'v': cy,
                         'x1': int(x1), 'y1': int(y1), 'x2': int(x2), 'y2': int(y2),
                     })
         except Exception as exc:
             self.get_logger().debug(f'YOLO error: {exc}')
         return results_out
+
+    def _detect_people(self, bgr: np.ndarray) -> List[dict]:
+        """Cajas de persona vía yolov8n COCO — solo para
+        _filter_hazmat_near_people, no se reportan como detección."""
+        boxes = []
+        try:
+            results = self._person_yolo(bgr, conf=YOLO_CONF, verbose=False)
+            for r in results:
+                for box in r.boxes:
+                    if self._person_yolo.names[int(box.cls[0])] != 'person':
+                        continue
+                    x1, y1, x2, y2 = box.xyxy[0].tolist()
+                    boxes.append({'x1': int(x1), 'y1': int(y1), 'x2': int(x2), 'y2': int(y2)})
+        except Exception as exc:
+            self.get_logger().debug(f'YOLO (personas) error: {exc}')
+        return boxes
 
     # ─── Imagen anotada ──────────────────────────────────────────
 
@@ -568,12 +698,22 @@ class ObjectDetector(Node):
         else:
             x, y, z = pos
 
-        # Deduplicación: misma clase a < DEDUP_DIST m
+        # Deduplicación: misma clase Y mismo nombre a < DEDUP_DIST m, Y visto
+        # hace menos de DEDUP_COOLDOWN s. Sin el cooldown, un objeto que sigue
+        # en cuadro (o sin profundidad real, donde todo cae en (0,0,0)) se
+        # marcaría UNA vez y nunca más — se ve el cuadro en vivo pero no
+        # vuelve a aparecer en la lista/CSV (bug ya visto con QR y hazmat).
+        now_s = self.get_clock().now().nanoseconds * 1e-9
+        key = (det['type'], det['name'])
+        last_seen = self._last_logged_at.get(key, -1e9)
         for existing in self._detections:
             if (existing['type'] == det['type'] and
+                    existing['name'] == det['name'] and
                     math.sqrt((x - existing['x'])**2 +
-                              (y - existing['y'])**2) < DEDUP_DIST):
+                              (y - existing['y'])**2) < DEDUP_DIST and
+                    now_s - last_seen < DEDUP_COOLDOWN):
                 return
+        self._last_logged_at[key] = now_s
 
         self._det_counter += 1
         now = datetime.datetime.now()

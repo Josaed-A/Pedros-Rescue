@@ -73,20 +73,36 @@ RUN apt-get update && apt-get install -y \
     && rm -rf /var/lib/apt/lists/*
 
 # ── Ultralytics YOLO para detección de objetos ────────────────────
-RUN pip3 install --no-cache-dir ultralytics==8.3.* 2>/dev/null || \
-    pip3 install --no-cache-dir ultralytics
+# --ignore-installed evita que pip intente desinstalar paquetes de apt (numpy, etc.)
+# que no tienen RECORD file; --break-system-packages evita el bloqueo PEP 668
+RUN pip3 install --no-cache-dir --break-system-packages --ignore-installed ultralytics==8.3.* 2>/dev/null || \
+    pip3 install --no-cache-dir --break-system-packages --ignore-installed ultralytics
 
 # ── zxing-cpp — detector QR (más resiliente que cv2.QRCodeDetector/pyzbar
 # ante ángulo, distancia y códigos parcialmente cortados) ────────────
 RUN pip3 install --no-cache-dir --break-system-packages --ignore-installed zxing-cpp
 
+# ── pupil-apriltags — detector AprilTag tagStandard41h12 (cv2.aruco NO
+# soporta esta familia) ───────────────────────────────────────────
+RUN pip3 install --no-cache-dir --break-system-packages --ignore-installed pupil-apriltags
+
+# ── CLIP — requerido por YOLO-World (set_classes) para detección de
+# objetos de misión que no existen en COCO (rope, hard hat, etc.) ────
+RUN pip3 install --no-cache-dir --break-system-packages --ignore-installed \
+    "git+https://github.com/ultralytics/CLIP.git"
+
 # ── GUI del brazo 6-DOF (rescue_command_station/arm): customtkinter + matplotlib ─
-RUN pip3 install --no-cache-dir customtkinter matplotlib 2>/dev/null || \
-    pip3 install --no-cache-dir --break-system-packages customtkinter matplotlib
+RUN pip3 install --no-cache-dir --break-system-packages --ignore-installed customtkinter matplotlib
 
 # ── Pre-descargar modelo YOLOv8n (~6 MB) para uso offline ────────
 RUN python3 -c "from ultralytics import YOLO; YOLO('yolov8n.pt')" || \
     echo "Descarga de YOLOv8n diferida (sin internet en build)"
+
+# ── Fijar setuptools compatible con colcon --symlink-install ─────
+# ultralytics/customtkinter suben setuptools a una versión que elimina
+# el flag --editable de "setup.py develop", rompiendo el build de
+# paquetes ament_python (joy, rescue_interfaces, etc.)
+RUN pip3 install --no-cache-dir --break-system-packages "setuptools==70.3.0"
 
 # ── Workspace ─────────────────────────────────────────────────────
 WORKDIR /workspace
