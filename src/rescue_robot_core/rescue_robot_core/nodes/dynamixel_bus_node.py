@@ -128,6 +128,9 @@ class AX12ADriverNode(Node):
             JointState, '/joint_states', 10)
         self._pub_status = self.create_publisher(
             ArmStatus, '/ax12a/status', 10)
+        self._last_status_message = ''
+        self._status_heartbeat = self.create_timer(
+            0.5, lambda: self._publicar_status(self._last_status_message))
         # Estado de las patas: position[] = grados de salida ACUMULADOS (rad)
         self._pub_legs_state = self.create_publisher(
             JointState, '/legs/state', 10)
@@ -260,6 +263,7 @@ class AX12ADriverNode(Node):
         self.create_service(Trigger,       '/legs/enable_torque',      self._srv_legs_enable_torque)
 
     def _publicar_status(self, mensaje: str = ''):
+        self._last_status_message = mensaje
         msg = ArmStatus()
         msg.header.stamp = self.get_clock().now().to_msg()
         msg.conectado    = self._conectado

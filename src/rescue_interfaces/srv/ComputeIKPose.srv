@@ -1,7 +1,6 @@
 # Cinematica inversa desde una pose COMPLETA Td = [R | p].
-# A diferencia de ComputeIK (que parametriza la orientacion como beta/q5/q6),
-# aqui se entrega la matriz de rotacion R completa, lo que permite componer
-# incrementos arbitrarios de orientacion para teleoperacion (R_new = R*R_inc).
+# Recibe la matriz de rotacion completa del TCP activo. Solo resuelve/preview;
+# los movimientos se solicitan mediante los servicios de trayectoria cartesiana.
 float64   x
 float64   y
 float64   z
@@ -9,6 +8,6 @@ float64[] r        # matriz de rotacion 3x3 en orden fila-mayor (9 valores)
 string    elbow    # "up" o "down"
 ---
 bool      success
-float64[] q_rad    # angulos articulares [q1..q6]
+float64[] q_rad    # radianes en convencion DRIVER y orden joint_order (J1..J6)
 float64   pos_err  # error de posicion alcanzado por la IK (m)
 string    mensaje

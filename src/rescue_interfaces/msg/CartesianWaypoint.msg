@@ -4,5 +4,5 @@ float64   x             # posicion objetivo (m)
 float64   y
 float64   z
 float64[] r             # matriz rotacion 3x3 row-major (9 elementos)
-float64   duration      # segundos para llegar desde el waypoint anterior (>= 0.05)
+float64   duration      # segundos para llegar desde el waypoint anterior (0.2..120 s por segmento)
 int32     n_steps       # pasos de interpolacion hacia este waypoint (>= 1)

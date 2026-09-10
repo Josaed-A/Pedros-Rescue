@@ -1,0 +1,87 @@
+{
+  "base_commit": "59fbf0dc518a98cfea8772b87242ec276084d9cf",
+  "branch": "feat/cinematica-6r-unificada",
+  "note": "Original web source plus Python integration; no hardware-driver changes. Review instructions before merging.",
+  "files": [
+    {
+      "path": "requirements_pc.txt",
+      "sha256": "1870bed6375d450728af7bd72a27789d2a74ddf2e3e36dc235b7564a33e1c605",
+      "base_sha256": "71f8d545df07e494118d02d98296767312537456a543f4d622801d46501909b7"
+    },
+    {
+      "path": "src/rescue_command_station/config/arm.yaml",
+      "sha256": "1f2abf0c97cae5de7527bb3b51b8253ceff767e5bf27456dbb7c761526d9b6ad",
+      "base_sha256": "a02ed4fd495a44876c384abf919737f7ee8ee0428b09f019b14ec92bc0a59f21"
+    },
+    {
+      "path": "src/rescue_command_station/launch/arm_station.launch.py",
+      "sha256": "ed9b824b71d25d3a99c382feb5fc581e48bf173fbcaaca2d8895f2258a733aae",
+      "base_sha256": "4e4ad2605ee89232d6bb3b83213c3e401dea5aa0cde1c8b33788add3a68785ea"
+    },
+    {
+      "path": "src/rescue_command_station/package.xml",
+      "sha256": "b51805feab5ff0061a044a1471f3a7ee8489862a84b7814bd54b645181544e6f",
+      "base_sha256": "a567e67c0c4cdc14d09ce749ea7d999ba1f948526e4524381c18115807633a5e"
+    },
+    {
+      "path": "src/rescue_command_station/rescue_command_station/arm/cartesian_controller.py",
+      "sha256": "86077694e70c75203b944053131a49748a9fd7df529ab56ea20b195f474c2d9b",
+      "base_sha256": "e5b6df559d0050c4288b70efb249a5155803416967698c11944c23c61ef2745d"
+    },
+    {
+      "path": "src/rescue_command_station/rescue_command_station/arm/cartesian_node.py",
+      "sha256": "ab2a9e898869cfe5cf0676bcd729b5b02e573baef46f9b8545cadcf5ad63d540",
+      "base_sha256": "c60cc7d3fed10d296e291536527568a47468d78207ddc36a9dfdc2af2e2da861"
+    },
+    {
+      "path": "src/rescue_command_station/rescue_command_station/arm/cinematica_node.py",
+      "sha256": "fb422261d4cf6a962c33de45bc35e8da02b0bf44352e47beb7cc31a63662befd",
+      "base_sha256": "3c69363c09dad95e9f3ebe0c35ada7706bd699585c46f695c41cbe5193597baa"
+    },
+    {
+      "path": "src/rescue_command_station/rescue_command_station/arm/gui_node.py",
+      "sha256": "ec46e57feccea8a404031c1a99d7c3723ca6bdb07007e8bc19d5ad4db1420c82",
+      "base_sha256": "2c96af2632af52c02d3b695bc4f83425939f73fbe56e250162040dc9b4d18f61"
+    },
+    {
+      "path": "src/rescue_command_station/rescue_command_station/arm/kinematics.py",
+      "sha256": "345a31cfd2e0ee7e336a3d018d1bdedb7f0a0f129c5630a61689b6a0a35948ee",
+      "base_sha256": "c7cf6c45124b1bbda69652987dc711f6aa7b4f25b68778e356b03736bb7b5e99"
+    },
+    {
+      "path": "src/rescue_command_station/setup.py",
+      "sha256": "305d404264b0497fd4092e86c8e08e1a6a3401540761fb7196682ee6aa9d08ba",
+      "base_sha256": "18a4e3b608430401a5a0c34a01b2735d6525b11c885ad518dc97f91f1d5af4a2"
+    },
+    {
+      "path": "src/rescue_command_station/ARM_6R.md",
+      "sha256": "c81557051ce42d36a22bfbbc10658efd35022e7aa9d17f67fd8a3c05e4d4409e",
+      "base_sha256": null
+    },
+    {
+      "path": "src/rescue_command_station/rescue_command_station/arm/configuration.py",
+      "sha256": "65de99766b51d99d7824ed891706d78fba1ff1a6e6f00afc2b6f3afa9ef42d18",
+      "base_sha256": null
+    },
+    {
+      "path": "src/rescue_command_station/rescue_command_station/arm/motion.py",
+      "sha256": "e98dcf373f2001163a9df838ae46a19fb753397ca5ba40b549e346a48665d87a",
+      "base_sha256": null
+    },
+    {
+      "path": "src/rescue_command_station/rescue_command_station/arm/simulator.py",
+      "sha256": "79bc414ac5a7658d4b1f3fbaab1380d35bd8b3afb6e685b32d63e8f6ca071091",
+      "base_sha256": null
+    },
+    {
+      "path": "src/rescue_command_station/test/test_arm_6r.py",
+      "sha256": "9de6a1a0ca23d953164d00b01ee9c683f3753c7d1cbcc4727fb81cab455139d8",
+      "base_sha256": null
+    },
+    {
+      "path": "src/rescue_command_station/test/test_executor_logic.py",
+      "sha256": "f597bac9cb88f9402e521bbc0ce696ed6b42746f7ba77b823804190fcaac39b6",
+      "base_sha256": null
+    }
+  ]
+}

@@ -1,0 +1,64 @@
+<!doctype html>
+<html lang="es">
+<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="theme-color" content="#0c1320"><title>Brazo 6R · Laboratorio de cinemática</title><link rel="stylesheet" href="style.css"><link rel="stylesheet" href="motion.css"></head>
+<body>
+<header><div class="brand"><span class="mark">6R</span><div><h1>Laboratorio de cinemática</h1><p>Base · tres ejes paralelos · muñeca · herramienta</p></div></div><a class="doclink" href="modelo.html" target="_blank" rel="noopener">Modelo y ecuaciones ↗</a></header>
+<main>
+<section class="controls panel" aria-label="Controles del brazo">
+ <div class="sectionhead"><h2>Cinemática directa</h2><span class="tag">ÁNGULOS → POSE</span></div>
+ <div id="joints"></div>
+ <div class="buttonrow"><button id="home">Inicial vertical · 0°</button><button id="zero">Postura de prueba</button></div>
+ <p class="hint">El cero vertical es singular. Usa la postura de prueba para explorar rectas laterales.</p>
+ <details open><summary>Geometría del brazo y barra <span>cm</span></summary><div class="paramgrid" id="geometry"></div><p class="hint">L₁ = 30, L₂ = 30 y L₃ = 10 cm. d es la barra desde J6 hasta su punta. e₅₆ separa los centros de J5 y J6 sobre X local.</p><p class="hint nominal">Barra d = 12 cm y e₅₆ = 0 son valores de ejemplo, pendientes de medir.</p></details>
+ <details open><summary>Cámara solidaria a J6 <span>montaje</span></summary><p class="hint">Centro de cámara respecto a J6, expresado en el marco 6. La barra y la cámara giran juntas.</p><div class="paramgrid" id="cameramount"></div><p class="hint nominal">Ejemplo: cámara en (6, 0, 4) cm. Ángulos de montaje = 0°: marco nominal, no calibración hand–eye. La caja blanca es esquemática.</p></details>
+ <details><summary>Límites de las articulaciones <span>°</span></summary><p class="hint">Valores matemáticos iniciales: −180° a 180°. Ajusta los límites de tu montaje; estos ángulos no son órdenes PWM.</p><div class="limits" id="limits"></div><p class="hint" id="limitmsg" role="status"></p></details>
+ <details><summary>Convención corregida</summary><p class="hint">En q = 0, los eslabones apuntan a +Z y la barra a +X. J1 gira sobre +Z; J2–J4 sobre −Y local; J5 sobre +Z local; J6 sobre +X local. Un ángulo positivo de J2 inclina el brazo hacia −X cuando J1 = 0.</p><p class="hint">J5 coincide con Z global solo en las posturas correspondientes. J6 gira la barra y la cámara: una punta sobre su eje no se traslada, pero una cámara desplazada lateralmente sí.</p></details>
+</section>
+<section class="workspace">
+ <div class="viewer panel"><div class="viewhead"><span>VISTA 3D <span class="subtle">/ metros en ejes</span></span><div class="buttonrow"><button data-view="iso" class="small active">3D</button><button data-view="front" class="small">Frente</button><button data-view="top" class="small">Planta</button></div></div>
+ <canvas id="scene" aria-label="Modelo tridimensional del brazo. Arrastra para rotar la cámara y usa la rueda para acercar." tabindex="0"></canvas>
+ <div class="viewfoot"><div><span class="legend cyan"></span>Brazo <span class="legend orange"></span>Objetivo <span class="legend violet"></span>Trayectoria <span class="axislabel">X <b class="x">rojo</b> · Y <b class="y">verde</b> · Z <b class="z">azul</b></span></div><span>Arrastra para orbitar · rueda para zoom</span></div></div>
+ <div class="motionpanel panel">
+  <div class="sectionhead"><h2>Movimiento relativo</h2><span class="tag" id="activepointtag">MUEVE LA PUNTA DE BARRA</span></div>
+  <div class="motionframe"><label for="moveframe">Ejes del desplazamiento</label><select id="moveframe"><option value="tool">Herramienta · Xₜ / Yₜ / Zₜ</option><option value="camera">Cámara · X꜀ / Y꜀ / Z꜀</option><option value="base">Base · X / Y / Z</option></select></div>
+  <div class="targetgrid relativegrid"><div class="field"><label for="dx">ΔXₜ · cm</label><input id="dx" type="number" value="1" min="-200" max="200" step="any"></div><div class="field"><label for="dy">ΔYₜ · cm</label><input id="dy" type="number" value="0" min="-200" max="200" step="any"></div><div class="field"><label for="dz">ΔZₜ · cm</label><input id="dz" type="number" value="0" min="-200" max="200" step="any"></div></div>
+  <div class="buttonrow relativebuttons"><button id="relativegoal">Fijar objetivo relativo</button><button id="relativemove" class="primary">Mover en recta</button></div>
+  <p class="hint" id="relativehint">Se mueve el punto controlado en los ejes elegidos al pulsar el botón. La orientación se mantiene durante la recta.</p>
+  <details><summary>Pasos rápidos sobre un eje</summary><div class="jogstep field"><label for="jogstep">Distancia por pulsación · cm</label><input id="jogstep" type="number" min="0.01" max="30" step="any" value="1"></div><div class="jogbuttons"><button data-jog="0,-1">−Xₜ</button><button data-jog="0,1">+Xₜ</button><button data-jog="1,-1">−Yₜ</button><button data-jog="1,1">+Yₜ</button><button data-jog="2,-1">−Zₜ</button><button data-jog="2,1">+Zₜ</button></div><p class="hint">Cada pulsación genera y reproduce una recta desde la postura actual.</p></details>
+ </div>
+ <div class="motionpanel panel">
+  <div class="sectionhead"><h2>Trayectoria A → B</h2><span class="tag">POSICIÓN + TIEMPO</span></div>
+  <p class="hint">A es la postura actual. B es el objetivo naranja de la inversa. Genera el recorrido antes de pulsar “Resolver inversa”, que aplica directamente la pose final.</p>
+  <div class="trajectorysettings"><div class="field"><label for="pathtype">Tipo de recorrido</label><select id="pathtype"><option value="cartesian">Recta cartesiana</option><option value="joint">Interpolación articular</option></select></div><div class="field"><label for="duration">Duración · s</label><input id="duration" type="number" min="0.2" max="60" step="any" value="3"></div></div>
+  <button class="primary full" id="generatepath">Generar A → B</button>
+  <p class="hint" id="pathkindhint">El punto controlado sigue una recta. En pose completa, la orientación cambia por la rotación más corta entre A y B.</p>
+  <div class="pathstatus" id="pathstatus" role="status" aria-live="polite">Ajusta el objetivo B o usa un desplazamiento relativo.</div>
+  <div id="pathplayback" hidden>
+   <div class="buttonrow playbackbuttons"><button id="playpath" class="primary">Reproducir</button><button id="pausepath">Pausar</button><button id="resetpath">Volver a A</button><button id="exportpath">Descargar CSV</button></div>
+   <label class="timelabel" for="pathtime"><span>Tiempo de la trayectoria</span><output id="timevalue">0,00 s</output></label><input id="pathtime" class="timeline" type="range" min="0" max="3" value="0" step="0.001">
+   <div class="pathmetrics" id="pathmetrics"></div>
+   <details open><summary>Ángulos de los servos en el tiempo <span>ángulo ° · tiempo s</span></summary><canvas id="jointplot" aria-label="Gráfico de los seis ángulos articulares frente al tiempo"></canvas><div class="plotlegend" id="plotlegend"></div></details>
+   <p class="hint">La velocidad mostrada es calculada; no se contrasta con las especificaciones de tus servos. La trayectoria cartesiana se verifica en muestras y puntos intermedios, sin comprobar colisiones ni torque.</p>
+  </div>
+ </div>
+ <div class="pose panel"><div class="sectionhead"><h2 id="posetitle">Pose actual · punta de barra</h2><span id="singularity" class="tag">6 ARTICULACIONES</span></div><div class="readouts" id="readouts"></div><p class="hint">Orientación: R = Rz(yaw) Ry(pitch) Rx(roll), respecto a la base.</p><details><summary id="matrixtitle">Matriz del punto controlado <span>traslación en m</span></summary><div id="matrix" class="matrix"></div></details><details open><summary>Herramienta y cámara en la base</summary><div class="framesummary" id="framesummary"></div><p class="hint">Las dos poses se actualizan siempre, independientemente del punto controlado.</p></details><details><summary>Transformación fija T₆꜀ <span>cámara → marco 6</span></summary><div class="matrix" id="cameramatrix"></div><p class="hint">Montaje nominal editable. No se estima ninguna calibración a partir de la imagen.</p></details></div>
+ <div class="check panel"><div><h2>Comprobar directa → inversa → directa</h2><p class="hint">Toma la pose actual, busca sus ángulos desde cero y compara la pose reconstruida.</p></div><button id="roundtrip" class="primary">Comprobar ciclo</button></div>
+</section>
+<section class="inverse panel" aria-label="Cinemática inversa">
+ <div class="sectionhead"><h2>Cinemática inversa</h2><span class="tag">POSE → ÁNGULOS</span></div>
+ <div class="controlpoint"><label for="controlpoint">Punto controlado por inversa y trayectoria</label><select id="controlpoint"><option value="tool">Punta de la barra · herramienta</option><option value="camera">Centro de la cámara</option></select><p class="hint">Cambiar este punto conserva los ángulos y copia su pose actual al objetivo B.</p></div>
+ <div class="segmented" role="group" aria-label="Objetivo de la inversa"><button id="posemode" class="active" aria-pressed="true">Pose completa</button><button id="posmode" aria-pressed="false">Solo posición</button></div>
+ <p class="hint" id="modehint">Especifica posición y orientación. Se calculan las ramas analíticas compatibles con tus límites.</p>
+ <h3>Punto B · posición en la base <span>cm</span></h3><div class="targetgrid" id="targetpos"></div>
+ <div id="orientation"><h3>Orientación objetivo <span>°</span></h3><div class="targetgrid" id="targetrot"></div></div>
+ <div class="buttonstack"><button id="capture">Copiar pose actual al objetivo</button><button id="solve" class="primary">Resolver inversa</button></div>
+ <div class="result" id="result" role="status" aria-live="polite"><strong>Listo para explorar</strong><p>Mueve un servo o cambia el objetivo. La cruz naranja muestra la pose solicitada.</p></div>
+ <div id="brancheswrap" hidden><label for="branches">Soluciones encontradas</label><select id="branches"></select><div class="solutionangles" id="solutionangles"></div></div>
+ <div class="errors"><div>Error de posición<strong id="poserror">—</strong></div><div>Error de orientación<strong id="roterror">—</strong></div></div>
+ <p class="hint" id="errhint">Errores entre la pose actual y el objetivo. En “solo posición”, la orientación queda libre.</p>
+ <div class="boundary"><h3>Alcance de la simulación</h3><p>Cinemática de cuerpos rígidos. No calcula colisiones, torque, flexión ni trayectorias seguras. Una pose alcanzable matemáticamente puede no ser ejecutable por el brazo real.</p></div>
+ <a href="modelo.html" target="_blank" rel="noopener" class="textlink">Consultar derivación y singularidades ↗</a>
+</section>
+</main><footer>Cero vertical · Barra y cámara solidarias a J6 · Montaje paramétrico, no calibrado</footer>
+<script src="kinematics.js"></script><script src="motion.js"></script><script src="app.js"></script><script src="motion-ui.js"></script>
+</body></html>

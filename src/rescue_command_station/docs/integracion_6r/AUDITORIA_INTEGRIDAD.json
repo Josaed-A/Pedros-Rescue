@@ -1,0 +1,22 @@
+{
+  "delivered_python_identical": {
+    "kinematics.py": "345a31cfd2e0ee7e336a3d018d1bdedb7f0a0f129c5630a61689b6a0a35948ee",
+    "motion.py": "e98dcf373f2001163a9df838ae46a19fb753397ca5ba40b549e346a48665d87a",
+    "cartesian_controller.py": "86077694e70c75203b944053131a49748a9fd7df529ab56ea20b195f474c2d9b",
+    "simulator.py": "79bc414ac5a7658d4b1f3fbaab1380d35bd8b3afb6e685b32d63e8f6ca071091"
+  },
+  "original_web_identical_files": 12,
+  "branch": "feat/cinematica-6r-unificada",
+  "local_geometry_preserved": {
+    "base_height": 0.12,
+    "L1": 0.36,
+    "L2": 0.36,
+    "L3": 0.0,
+    "tool_length": 0.0
+  },
+  "encoder_and_servo_parameters_unchanged": true,
+  "real_driver_methods_except_heartbeat_unchanged": true,
+  "no_duplicate_arm_definitions": true,
+  "interfaces_and_entrypoints_resolve": true,
+  "retired_active_channels_absent": true
+}

@@ -1,33 +1,11 @@
-"""
-gui_node.py
-===========
-Nodo ROS2 — interfaz grafica de control del brazo 6-DOF.
+"""Arm station GUI: the delivered Python model and original Canvas.
 
-No contiene logica de hardware ni de cinematica.
-Se comunica con el resto del sistema exclusivamente via ROS.
-
-Topics suscritos:
-  /joint_states           (sensor_msgs/JointState)
-  /end_effector_pose      (geometry_msgs/PoseStamped)
-  /fk_points              (sensor_msgs/JointState)   — puntos 3D del brazo
-  /sim/fk_points_preview  (sensor_msgs/JointState)   — preview IK
-  /ax12a/status           (rescue_interfaces/ArmStatus)
-  /ex106/status           (rescue_interfaces/ArmStatus)
-
-Topics publicados:
-  /ax12a/joint_cmd        (sensor_msgs/JointState)
-  /ex106/joint_cmd        (sensor_msgs/JointState)
-  /joint_states_preview   (sensor_msgs/JointState)
-
-Servicios llamados:
-  /ax12a|ex106/{connect,disconnect,emergency_stop,resume,
-                calibrate_start,calibrate_confirm,jog,rescue_pulse}
-  /compute_ik             (rescue_interfaces/ComputeIK)
+Joint feedback and active TCP pose arrive from ROS. Preview is local drawing
+data, never a deferred command. All Cartesian moves use the shared planner;
+manual joint commands are admitted by cartesian_node.
 """
 
 import math
-import os
-import signal
 import threading
 import time
 import tkinter as tk
@@ -38,11 +16,11 @@ from rclpy.node import Node
 from rclpy.qos import QoSHistoryPolicy, QoSProfile, QoSReliabilityPolicy
 from sensor_msgs.msg import JointState, Joy, CompressedImage
 from geometry_msgs.msg import PoseStamped
-from std_srvs.srv import Trigger
+from std_srvs.srv import Trigger, SetBool
 
 from std_msgs.msg import Bool, Float64, String
 from rescue_interfaces.msg import ArmStatus, CartesianState
-from rescue_interfaces.srv import (ComputeIK, ComputeIKPose, ServoCommand, ServoStatus,
+from rescue_interfaces.srv import (ComputeIKPose, ServoCommand, ServoStatus,
                                 CartesianGoto, CartesianTrajectory)
 from rescue_interfaces.msg import CartesianWaypoint
 
@@ -53,26 +31,12 @@ from rescue_command_station.vision.tk_image import bgr_frame_to_png_data
 
 import customtkinter as ctk
 
-import matplotlib
-matplotlib.use('TkAgg')
-from matplotlib.figure import Figure
-from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
-from mpl_toolkits.mplot3d import Axes3D  # noqa: F401 — registra la proyeccion '3d'
+from .web_view import ArmCanvas, scene_payload
+from .kinematics import rotx, roty, rotz, rot_to_rpy
+from .configuration import settings, joint_drivers, configured_arm
 
 ctk.set_appearance_mode('Dark')
 ctk.set_default_color_theme('blue')
-
-# Defaults usados si no se pasan parametros desde YAML
-_DEFAULT_JOINT_ORDER = ['Base', 'Hombro', 'Codo', 'Munieca_P',
-                        'Munieca_Y', 'Munieca_R']
-_DEFAULT_JOINT_SERVO = {
-    'Base':      ('ax', 16),
-    'Hombro':    ('ex', 1),
-    'Codo':      ('ax', 18),
-    'Munieca_P': ('ax', 30),
-    'Munieca_Y': ('ax', 4),
-    'Munieca_R': ('ax', 5),
-}
 
 # Paleta alineada con el dashboard (rescue_command_station/nodes/dashboard_node.py)
 COL = {
@@ -172,28 +136,15 @@ _aplicar_tema_dashboard()
 
 
 def quaternion_to_rpy(q) -> tuple[float, float, float]:
-    """geometry_msgs/Quaternion → (roll, pitch, yaw) en grados."""
-    sinr = 2.0 * (q.w * q.x + q.y * q.z)
-    cosr = 1.0 - 2.0 * (q.x * q.x + q.y * q.y)
-    roll = math.atan2(sinr, cosr)
-
-    sinp = 2.0 * (q.w * q.y - q.z * q.x)
-    pitch = (math.copysign(math.pi / 2, sinp)
-             if abs(sinp) >= 1 else math.asin(sinp))
-
-    siny = 2.0 * (q.w * q.z + q.x * q.y)
-    cosy = 1.0 - 2.0 * (q.y * q.y + q.z * q.z)
-    yaw = math.atan2(siny, cosy)
-
-    return math.degrees(roll), math.degrees(pitch), math.degrees(yaw)
+    return rot_to_rpy(quaternion_to_matrix(q))
 
 
 def quaternion_to_matrix(q) -> np.ndarray:
     """Matriz R que transforma vectores del frame herramienta al frame base."""
     x, y, z, w = float(q.x), float(q.y), float(q.z), float(q.w)
     n = math.sqrt(x*x + y*y + z*z + w*w)
-    if n < 1e-9:
-        return np.eye(3)
+    if not np.isfinite(n) or n < 1e-9:
+        raise ValueError("Quaternion invalido")
     x, y, z, w = x/n, y/n, z/n, w/n
     return np.array([
         [1.0 - 2.0*(y*y + z*z), 2.0*(x*y - z*w),       2.0*(x*z + y*w)],
@@ -202,24 +153,10 @@ def quaternion_to_matrix(q) -> np.ndarray:
     ], dtype=float)
 
 
-def _rotx3(a: float) -> np.ndarray:
-    c, s = math.cos(a), math.sin(a)
-    return np.array([[1, 0, 0], [0, c, -s], [0, s, c]], float)
-
-def _roty3(a: float) -> np.ndarray:
-    c, s = math.cos(a), math.sin(a)
-    return np.array([[c, 0, s], [0, 1, 0], [-s, 0, c]], float)
-
-def _rotz3(a: float) -> np.ndarray:
-    c, s = math.cos(a), math.sin(a)
-    return np.array([[c, -s, 0], [s, c, 0], [0, 0, 1]], float)
-
-
-def _parse_points(msg: JointState) -> np.ndarray:
-    """Decodifica position=[x0,y0,z0, x1,y1,z1,...] a array (N,3)."""
-    flat = list(msg.position)
-    n = len(flat) // 3
-    return np.array(flat).reshape(n, 3)
+# UI increments reuse the rotations in the supplied model.
+def _rotx3(a): return rotx(a)[:3, :3]
+def _roty3(a): return roty(a)[:3, :3]
+def _rotz3(a): return rotz(a)[:3, :3]
 
 
 def _future_result(future):
@@ -238,17 +175,24 @@ class GUINode(Node):
 
     def __init__(self):
         super().__init__('gui_control')
+        self.arm_model, self.model_sign = configured_arm(self)
 
         self._joint_order, self._joint_servo = self._leer_config_joints()
-        self.declare_parameter('reach', 0.74)
-        self.reach = float(self.get_parameter('reach').value)
+        self.declare_parameter('managed_by_dashboard', False)
+        self.managed_by_dashboard = bool(self.get_parameter('managed_by_dashboard').value)
 
         self._q_actual    = np.zeros(len(self._joint_order))
+        self._joint_seen = np.zeros(len(self._joint_order))
+        self._preview_q = None
         self._pose_actual = None
+        self._pose_seen = 0.0
+        self._cartesian_seen = 0.0
+        self._bus_seen = {"ax": 0.0, "ex": 0.0}
+        self._motion_pending = False
+        self._maintenance = False
+        self._maintenance_held = False
+        self._maintenance_pending = False
         self._joint_map   = {name: i for i, name in enumerate(self._joint_order)}
-        self._pts_real    : np.ndarray | None = None
-        self._pts_preview : np.ndarray | None = None
-        self._pts_version = 0
 
         self._ax_status = {'conectado': False, 'emergencia': False,
                            'modo_calib': False, 'mensaje': ''}
@@ -258,22 +202,14 @@ class GUINode(Node):
         self._lock = threading.Lock()
 
         # ── Publishers ─────────────────────────────────────────────
-        self._pub_ax_cmd = self.create_publisher(
-            JointState, '/ax12a/joint_cmd', 10)
-        self._pub_ex_cmd = self.create_publisher(
-            JointState, '/ex106/joint_cmd', 10)
-        self._pub_joint_preview = self.create_publisher(
-            JointState, '/joint_states_preview', 10)
+        self._pub_manual_cmd = self.create_publisher(
+            JointState, '/arm/manual_joint_cmd', 10)
 
         # ── Subscribers ────────────────────────────────────────────
         self.create_subscription(
             JointState,  '/joint_states',          self._cb_joint_states, 10)
         self.create_subscription(
             PoseStamped, '/end_effector_pose',     self._cb_pose,         10)
-        self.create_subscription(
-            JointState,  '/fk_points',             self._cb_fk_points,    10)
-        self.create_subscription(
-            JointState,  '/sim/fk_points_preview', self._cb_fk_preview,   10)
         self.create_subscription(
             ArmStatus,      '/ax12a/status',        self._cb_ax_status,    10)
         self.create_subscription(
@@ -282,6 +218,7 @@ class GUINode(Node):
             CartesianState, '/cartesian/state',     self._cb_cart_state,   10)
 
         self._cartesian_state = {
+            'maintenance': False, 'feedback_valid': False,
             'in_progress': False, 'progress': 0.0,
             'pos_error': 0.0, 'within_path_tol': True,
             'waypoint_idx': 0, 'total_waypoints': 0,
@@ -311,25 +248,34 @@ class GUINode(Node):
             'ex_status_srv': self.create_client(ServoStatus,  '/ex106/servo_status'),
             'ax_reset'     : self.create_client(Trigger,      '/ax12a/reset_alerts'),
             'ex_reset'     : self.create_client(Trigger,      '/ex106/reset_alerts'),
-            'compute_ik'     : self.create_client(ComputeIK,      '/compute_ik'),
             'compute_ik_pose': self.create_client(ComputeIKPose,  '/compute_ik_pose'),
+            'cartesian_cancel': self.create_client(Trigger, '/cartesian/cancel'),
             'cartesian_goto'  : self.create_client(CartesianGoto,       '/cartesian/goto'),
             'cartesian_traj'  : self.create_client(CartesianTrajectory, '/cartesian/trajectory'),
         }
+
+        self._maintenance_cli = self.create_client(SetBool, '/cartesian/maintenance')
 
         # ── Integracion con el dashboard ───────────────────────────
         #   /arm_active: el dashboard dice si el brazo esta al frente (mostrar/ocultar)
         #   /joy: L1/R1 alternan submodos (tabs) cuando el brazo esta al frente
         #   /gui_switch_request: pide volver al dashboard (boton "volver")
-        self._req_active = False        # ultimo /arm_active recibido
+        self._req_active = not self.managed_by_dashboard        # ultimo /arm_active recibido
         self._submode_step = 0          # pasos L1/R1 pendientes de aplicar
         self._prev_buttons: list = []
+        self._joy_stamp = 0.0
         self._joy_axes: list = []       # ultimos ejes del mando (teleop cartesiano)
         self._bus_reset_flag = False    # el dashboard pidio reiniciar los buses
         self.create_subscription(Bool, '/arm_active', self._cb_arm_active, 10)
         self.create_subscription(Joy, '/joy', self._cb_joy, 10)
         self.create_subscription(Bool, '/bus_reset', self._cb_bus_reset, 10)
         self._pub_switch = self.create_publisher(Bool, '/gui_switch_request', 10)
+        self._pub_arm_active = None
+        if not self.managed_by_dashboard:
+            # Match the dashboard's base-teleop inhibit when running standalone.
+            self._pub_arm_active = self.create_publisher(Bool, '/arm_active', 10)
+            self._active_timer = self.create_timer(
+                0.2, lambda: self._pub_arm_active.publish(Bool(data=True)))
 
         # ── Camara frontal (NO la Orbbec) + deteccion QR / senales ──
         self.declare_parameter('front_camera_topic', '/robot/camera/front/image_raw/compressed')
@@ -352,6 +298,12 @@ class GUINode(Node):
     # ── Integracion dashboard: visibilidad, mando, camara ─────────
 
     def _cb_arm_active(self, msg):
+        if not self.managed_by_dashboard:
+            return
+        if self._req_active and not msg.data:
+            self._joy_axes = []
+            self._joy_stamp = 0.0
+            self._call_trigger('cartesian_cancel')
         self._req_active = bool(msg.data)
 
     def _cb_bus_reset(self, msg):
@@ -359,6 +311,7 @@ class GUINode(Node):
             self._bus_reset_flag = True
 
     def _cb_joy(self, msg):
+        self._joy_stamp = time.monotonic()
         """L1/R1 → alternar submodos (tabs). Ejes → teleop cartesiano (los lee
         la App). Solo con el brazo al frente."""
         if not self._req_active:
@@ -405,27 +358,7 @@ class GUINode(Node):
     # ── Lectura de configuracion desde YAML ───────────────────────
 
     def _leer_config_joints(self):
-        """Lee joint_order y joint_drivers.<nombre>.* desde params ROS."""
-        self.declare_parameter('joint_order', _DEFAULT_JOINT_ORDER)
-        joint_order = list(self.get_parameter('joint_order').value)
-
-        joint_servo: dict[str, tuple[str, int]] = {}
-        for name in joint_order:
-            try:
-                self.declare_parameter(f'joint_drivers.{name}.driver', '')
-                self.declare_parameter(f'joint_drivers.{name}.id', 0)
-                driver = self.get_parameter(f'joint_drivers.{name}.driver').value
-                sid    = int(self.get_parameter(f'joint_drivers.{name}.id').value)
-                if driver in ('ax', 'ex'):
-                    joint_servo[name] = (driver, sid)
-            except Exception as e:
-                self.get_logger().warn(f'joint_drivers.{name}: {e}')
-
-        for name, val in _DEFAULT_JOINT_SERVO.items():
-            if name in joint_order and name not in joint_servo:
-                joint_servo[name] = val
-
-        return joint_order, joint_servo
+        return list(settings(self)['joint_order']), joint_drivers(self)
 
     # ── Propiedades de configuracion ──────────────────────────────
 
@@ -442,25 +375,23 @@ class GUINode(Node):
     def _cb_joint_states(self, msg: JointState):
         with self._lock:
             for name, pos in zip(msg.name, msg.position):
-                if name in self._joint_map:
-                    self._q_actual[self._joint_map[name]] = pos
+                if name in self._joint_map and np.isfinite(pos):
+                    i = self._joint_map[name]
+                    self._q_actual[i] = pos
+                    self._joint_seen[i] = time.monotonic()
 
     def _cb_pose(self, msg: PoseStamped):
         with self._lock:
             self._pose_actual = msg
+            self._pose_seen = time.monotonic()
 
-    def _cb_fk_points(self, msg: JointState):
-        with self._lock:
-            self._pts_real = _parse_points(msg)
-            self._pts_version += 1
 
-    def _cb_fk_preview(self, msg: JointState):
-        with self._lock:
-            self._pts_preview = _parse_points(msg)
-            self._pts_version += 1
+
+
 
     def _cb_ax_status(self, msg: ArmStatus):
         with self._lock:
+            self._bus_seen["ax"] = time.monotonic()
             self._ax_status = {
                 'conectado':  msg.conectado,
                 'emergencia': msg.emergencia,
@@ -470,6 +401,7 @@ class GUINode(Node):
 
     def _cb_ex_status(self, msg: ArmStatus):
         with self._lock:
+            self._bus_seen["ex"] = time.monotonic()
             self._ex_status = {
                 'conectado':  msg.conectado,
                 'emergencia': msg.emergencia,
@@ -479,7 +411,10 @@ class GUINode(Node):
 
     def _cb_cart_state(self, msg: CartesianState):
         with self._lock:
+            self._cartesian_seen = time.monotonic()
             self._cartesian_state = {
+                'maintenance': msg.maintenance,
+                'feedback_valid': msg.feedback_valid,
                 'in_progress':     msg.in_progress,
                 'progress':        msg.progress,
                 'pos_error':       msg.pos_error,
@@ -503,12 +438,18 @@ class GUINode(Node):
     @property
     def ax_status(self) -> dict:
         with self._lock:
-            return dict(self._ax_status)
+            status = dict(self._ax_status)
+            if time.monotonic() - self._bus_seen['ax'] > 2.0:
+                status.update(conectado=False, mensaje='Sin estado reciente del bus ax')
+            return status
 
     @property
     def ex_status(self) -> dict:
         with self._lock:
-            return dict(self._ex_status)
+            status = dict(self._ex_status)
+            if time.monotonic() - self._bus_seen['ex'] > 2.0:
+                status.update(conectado=False, mensaje='Sin estado reciente del bus ex')
+            return status
 
     @property
     def conectado(self) -> bool:
@@ -534,69 +475,65 @@ class GUINode(Node):
     @property
     def pose_actual(self):
         with self._lock:
-            return self._pose_actual
+            fresh = time.monotonic() - self._pose_seen < 1.0 and np.all(time.monotonic() - self._joint_seen < 1.0)
+            return self._pose_actual if fresh else None
 
-    def puntos_brazo(self):
+    @property
+    def motion_busy(self):
         with self._lock:
-            return self._pts_real, self._pts_preview, self._pts_version
+            return self._motion_pending or self._cartesian_state['in_progress']
+
+    @property
+    def motion_ready(self):
+        with self._lock:
+            now = time.monotonic()
+            return (not self._maintenance and not self._cartesian_state['maintenance']
+                    and self._cartesian_state['feedback_valid']
+                    and not self._motion_pending and not self._cartesian_state['in_progress']
+                    and now - self._cartesian_seen < 1.0
+                    and np.all(now - self._joint_seen < 1.0)
+                    and all(now - self._bus_seen[d] < 2.0 for d in ('ax', 'ex'))
+                    and all(s['conectado'] and not s['emergencia'] and not s['modo_calib']
+                            for s in (self._ax_status, self._ex_status)))
+
+
+
+    @property
+    def maintenance_ready(self):
+        with self._lock:
+            now = time.monotonic()
+            return (self._maintenance_held and not self._maintenance_pending
+                    and not self._motion_pending and not self._cartesian_state['in_progress']
+                    and now - self._cartesian_seen < 1.0
+                    and all(now - self._bus_seen[d] < 2.0 for d in ('ax', 'ex'))
+                    and all(v['conectado'] and v['modo_calib'] and not v['emergencia']
+                            for v in (self._ax_status, self._ex_status)))
 
     # ── Publicar comandos de movimiento ───────────────────────────
 
     def publicar_joint_cmd(self, q_rad: np.ndarray, vel_pct: float = 30.0):
-        """Separa q[] por driver segun la config de YAML y envia a cada bus."""
-        ax_names = [n for n in self._joint_order
-                    if self._joint_servo.get(n, ('ax',))[0] == 'ax']
-        ex_names = [n for n in self._joint_order
-                    if self._joint_servo.get(n, ('ax',))[0] == 'ex']
-
-        for driver, names, pub in (('ax', ax_names, self._pub_ax_cmd),
-                                   ('ex', ex_names, self._pub_ex_cmd)):
-            if not names:
-                continue
-            idx = [self._joint_order.index(n) for n in names]
-            msg = JointState()
-            msg.header.stamp = self.get_clock().now().to_msg()
-            msg.name     = names
-            msg.position = [float(q_rad[i]) for i in idx]
-            msg.velocity = [float(vel_pct)] * len(names)
-            pub.publish(msg)
-            if driver == 'ex':
-                self._jog_ex_fallback(names, idx, q_rad, vel_pct)
-
-    def _jog_ex_fallback(self, names: list[str], idx: list[int],
-                         q_rad: np.ndarray, vel_pct: float):
-        """Respaldo para EX-106+: usa el servicio por ID si esta disponible."""
-        cli = self._cli.get('ex_jog')
-        if cli is None or not cli.service_is_ready():
-            return
-
-        for name, i in zip(names, idx):
-            driver, sid = self._joint_servo.get(name, ('', 0))
-            if driver != 'ex' or sid <= 0:
-                continue
-            req = ServoCommand.Request()
-            req.id = int(sid)
-            req.target_deg = float(np.degrees(q_rad[i]))
-            req.vel_pct = float(vel_pct)
-
-            def _done(f, joint=name):
-                res = _future_result(f)
-                if res is None:
-                    self.get_logger().warn(
-                        f'Fallback EX jog para {joint}: llamada fallida')
-                elif not res.success:
-                    self.get_logger().warn(
-                        f'Fallback EX jog para {joint}: {res.mensaje}')
-
-            cli.call_async(req).add_done_callback(_done)
-
-    def publicar_preview(self, q_rad):
-        """Publica q_rad para que cinematica_node calcule el preview."""
+        """Submit a complete driver-angle command to the station arbiter."""
+        q_rad=np.asarray(q_rad,float)
+        if q_rad.shape!=(6,) or not np.all(np.isfinite(q_rad)):
+            self.get_logger().error('Comando articular invalido'); return
+        model=q_rad*self.model_sign
+        if np.any(model<self.arm_model.limits[:,0]) or np.any(model>self.arm_model.limits[:,1]):
+            self.get_logger().error('Comando rechazado: fuera de limites, sin recorte'); return
+        if not self.motion_ready:
+            self.get_logger().error('Comando rechazado: control ocupado o feedback/buses no disponibles'); return
         msg = JointState()
         msg.header.stamp = self.get_clock().now().to_msg()
-        msg.name     = list(self._joint_order)
-        msg.position = [float(q) for q in q_rad]
-        self._pub_joint_preview.publish(msg)
+        msg.name = list(self._joint_order)
+        msg.position = q_rad.tolist()
+        msg.velocity = [float(vel_pct)] * 6
+        self._pub_manual_cmd.publish(msg)
+
+    def mostrar_preview(self, q_rad):
+        """Local view only; it cannot publish a movement command."""
+        q_rad = np.asarray(q_rad, float)
+        if q_rad.shape == (6,) and np.all(np.isfinite(q_rad)):
+            with self._lock:
+                self._preview_q = q_rad.copy()
 
     # ── Llamadas a servicios Trigger ──────────────────────────────
 
@@ -620,10 +557,12 @@ class GUINode(Node):
         self._call_trigger('ex_connect')
 
     def desconectar(self):
+        self._call_trigger('cartesian_cancel')
         self._call_trigger('ax_disconnect')
         self._call_trigger('ex_disconnect')
 
     def emergencia_stop(self):
+        self._call_trigger('cartesian_cancel')
         self._call_trigger('ax_estop')
         self._call_trigger('ex_estop')
 
@@ -631,18 +570,71 @@ class GUINode(Node):
         self._call_trigger('ax_resume')
         self._call_trigger('ex_resume')
 
+    def _set_maintenance(self, enabled, on_success):
+        cli = self._maintenance_cli
+        if not cli.service_is_ready():
+            self.get_logger().error('/cartesian/maintenance no disponible; control bloqueado')
+            self._maintenance_pending = False
+            return
+        req = SetBool.Request(); req.data = enabled
+        def done(f):
+            res = _future_result(f)
+            self._maintenance_pending = False
+            if res is not None and res.success:
+                self._maintenance = enabled
+                self._maintenance_held = enabled
+                on_success()
+            else:
+                self.get_logger().error('Mantenimiento no confirmado; control bloqueado')
+        try:
+            cli.call_async(req).add_done_callback(done)
+        except Exception as exc:
+            self._maintenance_pending = False
+            self.get_logger().error(str(exc))
+
     def calib_start(self):
-        self._call_trigger('ax_cal_start')
-        self._call_trigger('ex_cal_start')
+        if self.motion_busy or self._maintenance_pending:
+            return
+        self._maintenance = True
+        self._maintenance_pending = True
+        def start():
+            self._call_trigger('ax_cal_start')
+            self._call_trigger('ex_cal_start')
+        self._set_maintenance(True, start)
 
     def calib_confirm(self):
-        self._call_trigger('ax_cal_ok')
-        self._call_trigger('ex_cal_ok')
+        if not self.maintenance_ready or self._maintenance_pending:
+            return
+        clients = [self._cli[k] for k in ('ax_cal_ok', 'ex_cal_ok')]
+        if not all(c.service_is_ready() for c in clients):
+            return
+        self._maintenance_pending = True
+        replies = []; gate = threading.Lock()
+        def done(f):
+            res = _future_result(f)
+            with gate:
+                replies.append(res is not None and res.success)
+                if len(replies) != 2:
+                    return
+            if all(replies):
+                self._set_maintenance(False, lambda: None)
+            else:
+                self._maintenance_pending = False
+                self.get_logger().error('Calibracion parcial; repetir inicio y confirmar ambos buses')
+        for cli in clients:
+            try:
+                cli.call_async(Trigger.Request()).add_done_callback(done)
+            except Exception:
+                done(None)
 
     # ── ServoCommand (jog / rescue) ───────────────────────────────
 
     def _call_servo_cmd(self, key: str, sid: int, target_deg: float,
                         vel_pct: float, on_result):
+        if not self.maintenance_ready or not np.all(np.isfinite([target_deg, vel_pct])):
+            if on_result:
+                on_result(False, 'Requiere mantenimiento y calibracion de ambos buses, sin emergencia')
+            return
         cli = self._cli.get(key)
         if cli is None or not cli.service_is_ready():
             self.get_logger().warn(f'Servicio {key} no disponible')
@@ -666,12 +658,17 @@ class GUINode(Node):
 
     def jog(self, joint_name: str, target_deg: float, vel_pct: float = 10.0,
             on_result=None):
-        driver, sid = self._joint_servo.get(joint_name, ('ax', 0))
+        i = self._joint_map[joint_name]
+        if time.monotonic() - self._joint_seen[i] > 1.0:
+            if on_result:
+                on_result(False, 'Jog requiere un angulo medido reciente')
+            return
+        driver, sid = self._joint_servo[joint_name]
         self._call_servo_cmd(f'{driver}_jog', sid, target_deg, vel_pct, on_result)
 
     def rescue_pulse(self, joint_name: str, direction: int, vel_pct: float = 15.0,
                      on_result=None):
-        driver, sid = self._joint_servo.get(joint_name, ('ax', 0))
+        driver, sid = self._joint_servo[joint_name]
         self._call_servo_cmd(f'{driver}_rescue', sid, direction, vel_pct, on_result)
 
     # ── Estado de servos / alarmas ────────────────────────────────
@@ -706,29 +703,7 @@ class GUINode(Node):
 
     # ── IK asincrono ──────────────────────────────────────────────
 
-    def pedir_ik(self, x, y, z, beta_deg, q5_deg, q6_deg, elbow, vel_pct,
-                 on_result):
-        cli = self._cli.get('compute_ik')
-        if cli is None or not cli.service_is_ready():
-            on_result(False, [], '/compute_ik no disponible')
-            return
-        req = ComputeIK.Request()
-        req.x        = float(x)
-        req.y        = float(y)
-        req.z        = float(z)
-        req.beta_deg = float(beta_deg)
-        req.q5_deg   = float(q5_deg)
-        req.q6_deg   = float(q6_deg)
-        req.elbow    = elbow
 
-        def _done(f):
-            res = _future_result(f)
-            if res is not None:
-                on_result(res.success, list(res.q_rad), res.mensaje)
-            else:
-                on_result(False, [], 'la llamada a /compute_ik fallo')
-
-        cli.call_async(req).add_done_callback(_done)
 
     def pedir_ik_pose(self, p, R, elbow, on_result):
         """IK desde una pose completa (R 3x3, p 3). Para teleoperacion cartesiana."""
@@ -750,7 +725,11 @@ class GUINode(Node):
             else:
                 on_result(False, [], 'la llamada a /compute_ik_pose fallo')
 
-        cli.call_async(req).add_done_callback(_done)
+        try:
+            self._motion_request(cli, req, _done,
+                                 lambda ok, text: on_result(ok, [], text), cancel_on_timeout=False)
+        except Exception as exc:
+            on_result(False, [], str(exc))
 
     def pedir_cartesian_goto(self, p, R, n_steps: int, step_dt: float,
                               vel_pct: float, elbow: str, on_result):
@@ -776,7 +755,48 @@ class GUINode(Node):
             else:
                 on_result(False, 'la llamada a /cartesian/goto fallo')
 
-        cli.call_async(req).add_done_callback(_done)
+        try:
+            self._motion_request(cli, req, _done, on_result)
+        except Exception as exc:
+            on_result(False, str(exc))
+
+    def _motion_request(self, cli, req, on_done, on_result, cancel_on_timeout=True):
+        """Bound client wait; a timed-out plan must be cancelled, never retried silently."""
+        with self._lock:
+            if self._motion_pending:
+                raise ValueError('Hay una peticion pendiente; espere o cancele')
+            self._motion_pending = True
+        try:
+            future = cli.call_async(req)
+        except Exception:
+            with self._lock:
+                self._motion_pending = False
+            raise
+        gate = threading.Lock()
+        finished = False
+        deadline = time.monotonic() + 60.0
+        timer = None
+
+        def finish(f=None):
+            nonlocal finished
+            with gate:
+                if finished:
+                    return
+                finished = True
+            with self._lock:
+                self._motion_pending = False
+            if timer is not None:
+                self.destroy_timer(timer)
+            if f is not None:
+                on_done(f)
+            else:
+                if cancel_on_timeout:
+                    self._call_trigger('cartesian_cancel')
+                future.cancel()
+                on_result(False, 'Sin respuesta en 60 s; verifique el estado antes de mover.')
+
+        timer = self.create_timer(0.2, lambda: finish() if time.monotonic() >= deadline else None)
+        future.add_done_callback(finish)
 
     def pedir_cartesian_trajectory(
         self, p0, R0, p1, R1,
@@ -822,7 +842,10 @@ class GUINode(Node):
             else:
                 on_result(False, 'la llamada a /cartesian/trajectory fallo')
 
-        cli.call_async(req).add_done_callback(_done)
+        try:
+            self._motion_request(cli, req, _done, on_result)
+        except Exception as exc:
+            on_result(False, str(exc))
 
 
 # ─────────────────────────────────────────────────────────────
@@ -836,25 +859,21 @@ class App(ctk.CTk):
         self._node = node
 
         # Resultados pendientes del thread ROS para aplicar en _loop_ui
-        self._pending_ik_q      : list | None  = None
         self._pending_ik_msg    : tuple | None = None   # (texto, color)
         self._pending_vel       : float        = 30.0
         self._pending_jog_msg   : tuple | None = None
         self._pending_rescue_msg: tuple | None = None
         self._pending_status    : dict        = {}
+        self._pending_lock = threading.Lock()
         self._status_poll_count = 0
         self._cart_delta_buttons: list[ctk.CTkButton] = []
-        self._drawn_pts_version = -1
 
         # Teleoperacion cartesiana: pose objetivo acumulada (R 3x3, p 3)
         self._tp_R              : np.ndarray | None = None
         self._tp_p              : np.ndarray | None = None
         self._stab_R            : np.ndarray | None = None   # R fija para estabilizacion
-        self._pending_teleop_q  : list | None  = None
         self._pending_teleop_msg: tuple | None = None
         self._pending_teleop_commit: tuple | None = None
-        self._joy_ik_inflight    = False   # 1 sola peticion IK por joystick a la vez
-        self._joy_inflight_ticks = 0       # timeout de seguridad si la IK no responde
         self._bus_reset_ticks    = 0       # ticks restantes del banner de reinicio de buses
         self._last_cart_in_prog  = False   # detecta flanco bajada para re-habilitar btn
 
@@ -897,6 +916,8 @@ class App(ctk.CTk):
             header, text='⟵ Dashboard', width=120, height=30,
             fg_color='#5d6d7e', hover_color='#34495e', command=self._node.pedir_dashboard)
         self.btn_back.grid(row=0, column=0, padx=(8, 6))
+        if not self._node.managed_by_dashboard:
+            self.btn_back.grid_remove()
         ctk.CTkLabel(header, text='Brazo 6-DOF',
                      font=('Roboto', 18, 'bold')).grid(row=0, column=1)
 
@@ -970,6 +991,17 @@ class App(ctk.CTk):
         self._build_tab_calib(self.tabs.tab('Calibrar'))
         self._build_tab_rescue(self.tabs.tab('Rescate'))
         self._build_tab_estado(self.tabs.tab('Estado'))
+        self.tabs.add('Simulador 6R')
+        ttk_text = 'Simulador sin hardware: misma cinemática y planificador que ROS.\nGeometría paramétrica, TCP herramienta/cámara, marcos locales y CSV.'
+        ctk.CTkLabel(self.tabs.tab('Simulador 6R'), text=ttk_text,
+                    wraplength=300).pack(padx=10,pady=15)
+        ctk.CTkButton(self.tabs.tab('Simulador 6R'), text='Abrir simulador',
+                      command=self._open_simulator).pack(pady=10)
+
+    def _open_simulator(self):
+        import subprocess
+        import sys
+        subprocess.Popen([sys.executable, '-m', 'rescue_command_station.arm.simulator'])
 
     def _refresh_camera(self):
         """Renderiza la ultima imagen de la camara frontal + QR/senal."""
@@ -1014,7 +1046,9 @@ class App(ctk.CTk):
                          pady=(4, 0), sticky='e')
             self._lbl_angs.append(lbl_act)
 
-            sld = ctk.CTkSlider(fr, from_=-180, to=180, number_of_steps=720,
+            driver_bounds = np.sort(self._node.arm_model.limits[i] * self._node.model_sign[i])
+            sld = ctk.CTkSlider(fr, from_=float(np.degrees(driver_bounds[0])),
+                                to=float(np.degrees(driver_bounds[1])),
                                 command=lambda v, i=i: self._on_fk_slider(i, v))
             sld.set(0)
             sld.grid(row=1, column=0, columnspan=2, sticky='ew',
@@ -1048,10 +1082,12 @@ class App(ctk.CTk):
     # ── Tab Teleop: control cartesiano en ejes de la camara ───────
 
     def _build_tab_teleop(self, tab):
+        ctk.CTkButton(tab, text='Cancelar trayectoria (no sustituye emergencia)',
+                      command=lambda: self._node._call_trigger('cartesian_cancel')).pack(fill='x', padx=8, pady=4)
         frame = ctk.CTkScrollableFrame(tab, fg_color='transparent')
         frame.pack(fill='both', expand=True)
 
-        ctk.CTkLabel(frame, text='Teleoperacion de camara (ejes locales)',
+        ctk.CTkLabel(frame, text='Teleoperacion del TCP activo',
                      font=('Roboto', 13, 'bold')).pack(pady=(4, 2))
 
         # Indicador de joystick: se ilumina (verde) cuando esta moviendo el brazo.
@@ -1085,7 +1121,7 @@ class App(ctk.CTk):
         fr_stab.pack(fill='x', padx=4, pady=(4, 2))
         self.var_stab = ctk.BooleanVar(value=False)
         self.chk_stab = ctk.CTkCheckBox(
-            fr_stab, text='Estabilizar orientacion de camara',
+            fr_stab, text='Fijar orientación del TCP activo',
             variable=self.var_stab, command=self._teleop_toggle_stab)
         self.chk_stab.pack(side='left')
         self.lbl_stab_estado = ctk.CTkLabel(
@@ -1096,13 +1132,13 @@ class App(ctk.CTk):
         self._tp_frame_trans = ctk.CTkFrame(frame, fg_color='transparent')
 
         # Marco de referencia: Mundo (base) = lineas rectas X/Y/Z fijas;
-        # Camara = ejes locales de la punta (seguir la orientacion actual).
-        self.var_tp_frame = ctk.StringVar(value='Camara')
+        # Camara = ejes del montaje de camara, distintos de la herramienta.
+        self.var_tp_frame = ctk.StringVar(value='Herramienta')
         fr_sel = ctk.CTkFrame(self._tp_frame_trans, fg_color='transparent')
         fr_sel.pack(fill='x', pady=(0, 4))
         ctk.CTkLabel(fr_sel, text='Ejes:').pack(side='left', padx=(2, 4))
         ctk.CTkSegmentedButton(
-            fr_sel, values=['Mundo', 'Camara'],
+            fr_sel, values=['Mundo', 'Herramienta', 'Camara'],
             variable=self.var_tp_frame).pack(side='left', fill='x', expand=True)
 
         btn_grid = ctk.CTkFrame(self._tp_frame_trans, fg_color='transparent')
@@ -1145,7 +1181,7 @@ class App(ctk.CTk):
                                           text_color=COL['accent'])
         self.lbl_speed_val.pack(side='right', padx=4)
         self.sld_speed = ctk.CTkSlider(
-            frame, from_=5, to=100, number_of_steps=19,
+            frame, from_=0, to=100, number_of_steps=20,
             command=self._on_speed_change)
         self.sld_speed.set(100)
         self.sld_speed.pack(fill='x', padx=4, pady=(0, 6))
@@ -1195,9 +1231,7 @@ class App(ctk.CTk):
         txt = f'objetivo  x {p[0]:+.3f}  y {p[1]:+.3f}  z {p[2]:+.3f} m'
         if self._tp_R is not None:
             R = self._tp_R
-            pitch = math.degrees(-math.asin(max(-1.0, min(1.0, R[2, 0]))))
-            roll  = math.degrees(math.atan2(R[2, 1], R[2, 2]))
-            yaw   = math.degrees(math.atan2(R[1, 0], R[0, 0]))
+            roll, pitch, yaw = rot_to_rpy(R)
             txt += f'\norient  R {roll:+.0f}  P {pitch:+.0f}  Y {yaw:+.0f}°'
         self.lbl_tp_pose.configure(text=txt)
 
@@ -1232,8 +1266,11 @@ class App(ctk.CTk):
             return False
         p = pose.pose.position
         self._tp_p = np.array([p.x, p.y, p.z], float)
+        self._tp_measured_R = quaternion_to_matrix(pose.pose.orientation)
         # Con estabilizacion activa, no se toca la R bloqueada
-        if not self.var_stab.get():
+        if self.var_stab.get() and self._stab_R is not None:
+            self._tp_R = self._stab_R.copy()
+        else:
             self._tp_R = quaternion_to_matrix(pose.pose.orientation)
         self._update_tp_label()
         self.lbl_tp_msg.configure(text='Pose objetivo sincronizada.',
@@ -1241,8 +1278,8 @@ class App(ctk.CTk):
         return True
 
     def _teleop_ensure_seed(self) -> bool:
-        if self._tp_R is not None and self._tp_p is not None:
-            return True
+        if not self._node.motion_ready:
+            return False
         return self._teleop_sync()
 
     def _teleop_translate(self, axis: int, sign: int):
@@ -1256,10 +1293,8 @@ class App(ctk.CTk):
         if not self._teleop_ensure_seed():
             return
         step = sign * self._tp_lin_step()
-        if self.var_tp_frame.get() == 'Camara':
-            direccion = self._tp_R[:, axis]        # eje local de la punta
-        else:
-            direccion = np.eye(3)[:, axis]         # eje del mundo (base)
+        frame={'Mundo':'base','Herramienta':'tool','Camara':'camera'}[self.var_tp_frame.get()]
+        direccion = self._node.arm_model.relative_basis(self._tp_measured_R,frame)[:,axis]
         p_new = self._tp_p + step * direccion
         self._teleop_send(p_new, self._tp_R)
 
@@ -1273,31 +1308,27 @@ class App(ctk.CTk):
         self._teleop_send(self._tp_p, R_new)
 
     def _teleop_send(self, p_new, R_new):
-        """Arma Td=[R|p] y resuelve via IK. Solo confirma el objetivo si la IK lo alcanza."""
+        """Valida el recorrido completo antes de confirmar el objetivo solicitado."""
         # Con estabilizacion activa, la orientacion siempre es la R bloqueada.
         # Las rotaciones manuales actualizan _stab_R para poder reorientar
         # intencionalmente mientras se mantiene la estabilizacion.
         if self.var_stab.get() and self._stab_R is not None:
             R_send = self._stab_R
             if not np.allclose(R_new, self._tp_R if self._tp_R is not None else R_new):
-                self._stab_R = R_new   # rotacion intencional → actualiza R fija
                 R_send = R_new
         else:
             R_send = R_new
-        elbow = getattr(self, 'var_elbow', None)
-        elbow = elbow.get() if elbow is not None else 'down'
-        self.lbl_tp_msg.configure(text='Calculando IK...', text_color=COL['warn'])
+        elbow = ''  # Rama continua desde feedback
+        self.lbl_tp_msg.configure(text='Validando trayectoria...', text_color=COL['warn'])
 
-        def _cb(ok, q_rad, msg):
+        def _cb(ok, msg):
             if ok:
                 self._pending_teleop_commit = (p_new, R_send)
-                self._pending_teleop_q      = q_rad
-                self._pending_teleop_msg    = ('Objetivo alcanzado', COL['ok'])
+                self._pending_teleop_msg    = ('Trayectoria validada y aceptada', COL['ok'])
             else:
-                self._pending_teleop_q   = None
                 self._pending_teleop_msg = (f'No alcanzable: {msg}', COL['err'])
 
-        self._node.pedir_ik_pose(p_new, R_send, elbow, _cb)
+        self._node.pedir_cartesian_goto(p_new, R_send, 30, 0.02, self._vel(), elbow, _cb)
 
     def _joystick_teleop_step(self):
         """Teleop cartesiano con el mando (pestana Teleop, brazo al frente).
@@ -1308,6 +1339,9 @@ class App(ctk.CTk):
           - stick DERECHO   → rotacion (yaw / pitch)
         Mientras mantengas el stick, se va desplazando (1 paso por ciclo).
         Manda 1 sola peticion IK a la vez."""
+        if time.monotonic() - self._node._joy_stamp > 0.7:
+            self._set_joy_indicator(False)
+            return
         axes = self._node._joy_axes
         dz = cfg.ARM_DEADZONE
 
@@ -1331,18 +1365,16 @@ class App(ctk.CTk):
         if not active:
             return
 
-        # 1 sola IK a la vez (con timeout de seguridad si no responde)
-        if self._joy_ik_inflight:
-            self._joy_inflight_ticks += 1
-            if self._joy_inflight_ticks < 16:   # ~2 s a 120 ms/loop
-                return
-            self._joy_ik_inflight = False
+        # The service callback releases the request; long preflight is still active.
+        if self._node.motion_busy:
+            return
         if not self._teleop_ensure_seed():
             return
 
         # Traslacion en ejes de la CAMARA (columnas de R = ejes locales de la punta)
         lin = self._tp_lin_step()
-        basis = self._tp_R
+        frame={'Mundo':'base','Herramienta':'tool','Camara':'camera'}[self.var_tp_frame.get()]
+        basis = self._node.arm_model.relative_basis(self._tp_measured_R,frame)
         # stick Y suele venir invertido (arriba = -1)
         dp = lin * (tx * basis[:, 0] - ty * basis[:, 1] + tz * basis[:, 2])
         p_new = self._tp_p + dp
@@ -1351,8 +1383,6 @@ class App(ctk.CTk):
         ang = math.radians(self._tp_ang_step())
         R_new = self._tp_R @ _rotz3(ryaw * ang) @ _roty3(-rpitch * ang)
 
-        self._joy_ik_inflight = True
-        self._joy_inflight_ticks = 0
         self._teleop_send(p_new, R_new)
 
     def _set_joy_indicator(self, active):
@@ -1376,20 +1406,15 @@ class App(ctk.CTk):
         frame.pack(fill='both', expand=True)
 
         ik_rows = [('X (m):', '0.30'), ('Y (m):', '0.0'), ('Z (m):', '0.20'),
-                   ('Beta (°):', '0'), ('q5 (°):', '0'), ('q6 (°):', '0')]
+                   ('Roll (°):', '0'), ('Pitch (°):', '0'), ('Yaw (°):', '0')]
         self._ik_ent: list[ctk.CTkEntry] = []
         for lbl_t, val in ik_rows:
             e = self._row_entry(frame, lbl_t, val, lw=80)
             self._ik_ent.append(e)
 
-        elbow_row = ctk.CTkFrame(frame, fg_color='transparent')
-        elbow_row.pack(fill='x', padx=4, pady=2)
-        ctk.CTkLabel(elbow_row, text='Codo:').pack(side='left')
-        self.var_elbow = ctk.StringVar(value='down')
-        ctk.CTkRadioButton(elbow_row, text='Abajo', variable=self.var_elbow,
-                           value='down').pack(side='left', padx=8)
-        ctk.CTkRadioButton(elbow_row, text='Arriba', variable=self.var_elbow,
-                           value='up').pack(side='left')
+        ctk.CTkLabel(frame, text='TCP: ' + self._node.arm_model.p.control_frame +
+                    ' · pose completa XYZ/RPY · rama continua desde feedback',
+                    wraplength=340).pack(pady=4)
 
         step_row = ctk.CTkFrame(frame, fg_color='transparent')
         step_row.pack(fill='x', padx=4, pady=2)
@@ -1400,9 +1425,9 @@ class App(ctk.CTk):
 
         traj_row = ctk.CTkFrame(frame, fg_color='transparent')
         traj_row.pack(fill='x', padx=4, pady=2)
-        ctk.CTkLabel(traj_row, text='Pasos tray. (0=directo):').pack(side='left')
+        ctk.CTkLabel(traj_row, text='Muestras base (>=1):').pack(side='left')
         self.entry_traj_steps = ctk.CTkEntry(traj_row, width=46)
-        self.entry_traj_steps.insert(0, '0')
+        self.entry_traj_steps.insert(0, '30')
         self.entry_traj_steps.pack(side='left', padx=4)
         ctk.CTkLabel(traj_row, text='dt(s):').pack(side='left', padx=(10, 0))
         self.entry_traj_dt = ctk.CTkEntry(traj_row, width=46)
@@ -1438,9 +1463,11 @@ class App(ctk.CTk):
             btn.pack(side='left', padx=2)
             self._cart_delta_buttons.append(btn)
 
-        self.btn_ik = ctk.CTkButton(frame, text='MOVER (IK)',
+        self.btn_ik = ctk.CTkButton(frame, text='PLANIFICAR Y MOVER (pose)',
                                     state='disabled', command=self._move_ik)
         self.btn_ik.pack(fill='x', pady=6, padx=4)
+        ctk.CTkButton(frame, text='Resolver IK: solo preview',
+                      command=self._preview_ik).pack(fill='x', padx=4)
         self.lbl_ik_warn = ctk.CTkLabel(frame, text='', text_color=COL['warn'],
                                         wraplength=340)
         self.lbl_ik_warn.pack()
@@ -1485,7 +1512,7 @@ class App(ctk.CTk):
         self.btn_calib_start.pack(fill='x', pady=4, padx=4)
 
         self.lbl_calib_hint = ctk.CTkLabel(
-            frame, text='Durante la calibracion, mueve cada joint con ◄ ► '
+            frame, text='Mantenimiento bloquea los movimientos normales. Durante la calibracion, mueve cada joint con ◄ ► '
                         'hasta su posicion home y confirma.',
             wraplength=340, text_color=COL['muted'])
         self.lbl_calib_hint.pack(pady=2)
@@ -1629,8 +1656,9 @@ class App(ctk.CTk):
 
     def _on_status_result(self, filas):
         """Llamado desde el thread ROS — guarda filas para aplicar en _loop_ui."""
-        for fila in filas:
-            self._pending_status[fila['nombre']] = fila
+        with self._pending_lock:
+            for fila in filas:
+                self._pending_status[fila['nombre']] = fila
 
     # ── Columna derecha: visualizacion 3D embebida ─────────────────
 
@@ -1641,65 +1669,8 @@ class App(ctk.CTk):
         right.grid_rowconfigure(1, weight=2)   # camara frontal
         right.grid_columnconfigure(0, weight=1)
 
-        reach = self._node.reach
-
-        self._fig = Figure(figsize=(7, 7), facecolor=COL['panel_bg'])
-        gs = self._fig.add_gridspec(2, 2, hspace=0.32, wspace=0.28,
-                                    height_ratios=[1.6, 1.0])
-
-        self._ax3d = self._fig.add_subplot(gs[0, :], projection='3d')
-        self._ax_fr = self._fig.add_subplot(gs[1, 0])
-        self._ax_tp = self._fig.add_subplot(gs[1, 1])
-
-        self._ax3d.set_facecolor(COL['panel_bg'])
-        self._ax3d.set_xlim(-reach, reach)
-        self._ax3d.set_ylim(-reach, reach)
-        self._ax3d.set_zlim(0, reach * 1.2)
-        self._ax3d.set_title('Brazo (azul = real, naranja = preview IK)',
-                             color='white', fontsize=10)
-        self._ax3d.tick_params(colors='gray', labelsize=7)
-        self._ax3d.set_xlabel('X', color='gray', fontsize=8)
-        self._ax3d.set_ylabel('Y', color='gray', fontsize=8)
-        self._ax3d.set_zlabel('Z', color='gray', fontsize=8)
-        self._ax3d.view_init(elev=22, azim=-58)
-
-        for ax, title, xlim, ylim in [
-            (self._ax_fr, 'Frontal XZ', (-reach, reach), (0, reach * 1.2)),
-            (self._ax_tp, 'Superior XY', (-reach, reach), (-reach, reach)),
-        ]:
-            ax.set_facecolor(COL['panel_bg'])
-            ax.set_title(title, color='white', fontsize=9)
-            ax.tick_params(colors='gray', labelsize=7)
-            ax.grid(True, color='#333', lw=0.5)
-            ax.set_xlim(*xlim)
-            ax.set_ylim(*ylim)
-            ax.set_aspect('equal')
-
-        kw = dict(color=COL['real'], lw=3, ms=6,
-                  markerfacecolor=COL['real_dot'], marker='o')
-        kw2 = dict(color=COL['real'], lw=2, ms=4,
-                   markerfacecolor=COL['real_dot'], marker='o')
-        self._ln3d,  = self._ax3d.plot([], [], [], **kw)
-        self._ln_fr, = self._ax_fr.plot([], [], **kw2)
-        self._ln_tp, = self._ax_tp.plot([], [], **kw2)
-
-        # Pinza (ultimo segmento muñeca→punta) en verde, mas gruesa
-        kwg = dict(color=COL['ok'], lw=5, ms=7,
-                   markerfacecolor=COL['ok'], marker='o', solid_capstyle='round')
-        self._ln3d_grip, = self._ax3d.plot([], [], [], **kwg)
-        self._ln_fr_grip, = self._ax_fr.plot([], [], **dict(kwg, lw=4, ms=5))
-        self._ln_tp_grip, = self._ax_tp.plot([], [], **dict(kwg, lw=4, ms=5))
-
-        kwp = dict(color=COL['prev'], lw=2, ms=5,
-                   markerfacecolor=COL['prev_dot'], marker='o',
-                   linestyle='--', alpha=0.7)
-        self._ln3d_prev,  = self._ax3d.plot([], [], [], **kwp)
-        self._ln_fr_prev, = self._ax_fr.plot([], [], **kwp)
-        self._ln_tp_prev, = self._ax_tp.plot([], [], **kwp)
-
-        self._canvas = FigureCanvasTkAgg(self._fig, master=right)
-        self._canvas.get_tk_widget().grid(row=0, column=0, sticky='nsew',
-                                          padx=4, pady=4)
+        self._arm_canvas = ArmCanvas(right)
+        self._arm_canvas.grid(row=0, column=0, sticky='nsew', padx=4, pady=4)
 
         # ── Camara frontal (NO la Orbbec) + QR/senales, lado derecho ──
         cam = ctk.CTkFrame(right, fg_color=COL['surface'])
@@ -1722,26 +1693,17 @@ class App(ctk.CTk):
         self.lbl_det.grid(row=3, column=0, sticky='ew', padx=8, pady=(0, 6))
 
     def _redraw_arm(self):
-        pts, pts_pre, version = self._node.puntos_brazo()
-        if version == self._drawn_pts_version:
-            return
-        self._drawn_pts_version = version
-
-        if pts is not None:
-            self._ln3d.set_data_3d(pts[:, 0], pts[:, 1], pts[:, 2])
-            self._ln_fr.set_data(pts[:, 0], pts[:, 2])
-            self._ln_tp.set_data(pts[:, 0], pts[:, 1])
-            # Pinza = ultimo segmento (muñeca → punta)
-            g = pts[-2:]
-            self._ln3d_grip.set_data_3d(g[:, 0], g[:, 1], g[:, 2])
-            self._ln_fr_grip.set_data(g[:, 0], g[:, 2])
-            self._ln_tp_grip.set_data(g[:, 0], g[:, 1])
-        if pts_pre is not None:
-            self._ln3d_prev.set_data_3d(pts_pre[:, 0], pts_pre[:, 1],
-                                        pts_pre[:, 2])
-            self._ln_fr_prev.set_data(pts_pre[:, 0], pts_pre[:, 2])
-            self._ln_tp_prev.set_data(pts_pre[:, 0], pts_pre[:, 1])
-        self._canvas.draw_idle()
+        with self._node._lock:
+            q = self._node._q_actual.copy()
+            seen = self._node._joint_seen.copy()
+            preview = None if self._node._preview_q is None else self._node._preview_q.copy()
+        fresh = bool(np.all(time.monotonic() - seen < 1.0))
+        status = ('Feedback de seis articulaciones · naranja: preview IK' if fresh else
+                  'SIN FEEDBACK COMPLETO RECIENTE · última pose / cero de referencia')
+        signs = self._node.model_sign
+        self._arm_canvas.submit(scene_payload(
+            self._node.arm_model, q * signs,
+            None if preview is None else preview * signs, status))
 
     # ── Helpers ───────────────────────────────────────────────────
 
@@ -1781,29 +1743,26 @@ class App(ctk.CTk):
 
     def _sync_sliders_to_actual(self):
         q = self._node.q_actual
+        model = q * self._node.model_sign
+        if np.any(model < self._node.arm_model.limits[:, 0]) or np.any(model > self._node.arm_model.limits[:, 1]):
+            self.lbl_global.configure(text='Feedback fuera de limites: revise calibracion')
+            return
         for i, sld in enumerate(self._fk_sliders):
             deg = math.degrees(q[i])
-            deg = ((deg + 180.0) % 360.0) - 180.0
             sld.set(deg)
             self._fk_val_lbls[i].configure(text=f'{deg:.1f}°')
 
     def _set_ik_xyz(self, x: float, y: float, z: float):
         for entry, value in zip(self._ik_ent[:3], [x, y, z]):
             entry.delete(0, 'end')
-            entry.insert(0, f'{value:.4f}')
+            entry.insert(0, f'{value:.8f}')
 
-    def _set_ik_orientation(self, beta_deg: float, q5_deg: float,
-                            q6_deg: float):
-        for entry, value in zip(self._ik_ent[3:6], [beta_deg, q5_deg, q6_deg]):
+    def _set_ik_orientation(self, roll_deg, pitch_deg, yaw_deg):
+        for entry, value in zip(self._ik_ent[3:6], [roll_deg, pitch_deg, yaw_deg]):
             entry.delete(0, 'end')
-            entry.insert(0, f'{value:.2f}')
+            entry.insert(0, f'{value:.7f}')
 
-    def _current_orientation_deg(self) -> tuple[float, float, float]:
-        q = self._node.q_actual
-        if len(q) < 6:
-            return 0.0, 0.0, 0.0
-        beta = q[1] - math.pi/2 + q[2] + q[3]
-        return math.degrees(beta), math.degrees(q[4]), math.degrees(q[5])
+
 
     def _copy_current_pose_to_ik(self):
         pose = self._node.pose_actual
@@ -1813,46 +1772,23 @@ class App(ctk.CTk):
             return
         p = pose.pose.position
         self._set_ik_xyz(p.x, p.y, p.z)
-        self._set_ik_orientation(*self._current_orientation_deg())
+        self._set_ik_orientation(*quaternion_to_rpy(pose.pose.orientation))
 
     def _move_cart_delta(self, dx: int, dy: int, dz: int):
-        """Mueve la punta UN paso sobre un eje del MUNDO (base), manteniendo
-        la orientacion actual EXACTA (translacion pura).
-
-        Usa /compute_ik_pose con la matriz R completa de la pose actual — NO la
-        reparametrizacion beta/q5/q6+atan2(y,x), que acoplaba la orientacion a la
-        posicion y hacia que el movimiento en un solo eje no funcionara.
-        La IK numerica se siembra con la configuracion actual => movimiento
-        continuo y suave sin volteos de munieca.
-        """
+        """Validate the complete Cartesian segment before sending any point."""
+        if not self._node.motion_ready:
+            return
         pose = self._node.pose_actual
         if pose is None:
-            self.lbl_ik_warn.configure(text='Aun no hay pose actual.',
-                                       text_color=COL['warn'])
+            self.lbl_ik_warn.configure(text='Sin pose reciente', text_color=COL['warn'])
             return
-        step = self._cart_step()
         p = pose.pose.position
-        R = quaternion_to_matrix(pose.pose.orientation)   # orientacion a fijar
-        p_new = np.array([p.x + dx * step,
-                          p.y + dy * step,
-                          p.z + dz * step], float)
+        R = quaternion_to_matrix(pose.pose.orientation)
+        p_new = np.array([p.x, p.y, p.z]) + np.array([dx, dy, dz]) * self._cart_step()
         self._set_ik_xyz(*p_new)
-        self._set_ik_orientation(*self._current_orientation_deg())
-        self._pending_vel = self._vel()
-        self.lbl_ik_warn.configure(text='Calculando IK...',
-                                   text_color=COL['warn'])
-
-        def _cb(ok, q_rad, msg):
-            if ok:
-                self._pending_ik_q   = q_rad
-                self._pending_ik_msg = (
-                    f'Movido {step*1000:.0f} mm (orientacion fija)', COL['ok'])
-                self._node.publicar_preview(q_rad)
-            else:
-                self._pending_ik_q   = None
-                self._pending_ik_msg = (f'No alcanzable: {msg}', COL['err'])
-
-        self._node.pedir_ik_pose(p_new, R, self.var_elbow.get(), _cb)
+        self._set_ik_orientation(*rot_to_rpy(R))
+        self._node.pedir_cartesian_goto(p_new, R, self._traj_steps(), self._traj_dt(),
+                                       self._vel(), '', self._on_cartesian_result)
 
     # ── Callbacks de acciones ─────────────────────────────────────
 
@@ -1865,92 +1801,64 @@ class App(ctk.CTk):
     def _move_fk(self):
         q_rad = np.radians([s.get() for s in self._fk_sliders])
         self._node.publicar_joint_cmd(q_rad, self._vel())
-        self._node.publicar_preview(q_rad)
+        self._node.mostrar_preview(q_rad)
 
     def _traj_steps(self) -> int:
-        try:    return max(0, int(self.entry_traj_steps.get()))
-        except ValueError: return 0
+        try: return max(1, min(3000, int(self.entry_traj_steps.get())))
+        except ValueError: return 30
 
     def _traj_dt(self) -> float:
         try:    return max(0.02, min(2.0, float(self.entry_traj_dt.get())))
         except ValueError: return 0.10
 
+    def _read_pose_target(self):
+        values = np.array([float(e.get()) for e in self._ik_ent])
+        if not np.all(np.isfinite(values)):
+            raise ValueError('La pose debe ser finita')
+        r, p, y = np.radians(values[3:])
+        return values[:3], (rotz(y) @ roty(p) @ rotx(r))[:3, :3]
+
+    def _on_cartesian_result(self, ok, message):
+        self._pending_ik_msg = (message, COL['ok'] if ok else COL['err'])
+
     def _move_ik(self):
-        try:
-            x, y, z, beta_deg, q5_deg, q6_deg = [
-                float(e.get()) for e in self._ik_ent]
-        except ValueError:
-            self.lbl_ik_warn.configure(text='Valores invalidos.',
-                                       text_color=COL['err'])
+        if not self._node.motion_ready:
             return
-
-        self.btn_ik.configure(state='disabled')
-        self._pending_vel = self._vel()
-        n_steps = self._traj_steps()
-
-        if n_steps > 0:
-            # Modo trayectoria: usa CartesianTrajectory (tolerancias + feedback)
+        try:
+            p1, R1 = self._read_pose_target()
             pose = self._node.pose_actual
             if pose is None:
-                self.lbl_ik_warn.configure(
-                    text='Sin pose actual para iniciar trayectoria.',
-                    text_color=COL['err'])
-                self.btn_ik.configure(state='normal')
-                return
-            p0 = np.array([pose.pose.position.x,
-                            pose.pose.position.y,
-                            pose.pose.position.z])
+                raise ValueError('Sin pose actual reciente')
+            p = pose.pose.position
+            p0 = np.array([p.x, p.y, p.z])
             R0 = quaternion_to_matrix(pose.pose.orientation)
-            p1 = np.array([x, y, z])
-            q1t = math.atan2(y, x)
-            R1 = (_rotz3(q1t) @ _roty3(math.radians(beta_deg))
-                  @ _rotx3(math.radians(q5_deg)) @ _rotz3(math.radians(q6_deg)))
-
-            try:
-                path_tol = max(0.0, float(self.entry_path_tol.get()))
-                goal_tol = max(0.0, float(self.entry_goal_tol.get()))
-            except ValueError:
-                path_tol, goal_tol = 0.0, 0.02
-
-            self.lbl_ik_warn.configure(text='Enviando trayectoria...',
-                                        text_color=COL['warn'])
-            self.traj_progress.set(0)
-            self.lbl_traj_state.configure(text='Iniciando...', text_color=COL['warn'])
-
-            def _on_traj(ok, msg):
-                self._pending_ik_msg = (
-                    f'Trayectoria: {msg}' if ok else f'Error: {msg}',
-                    COL['ok'] if ok else COL['err'])
-
+            ptol, gtol = float(self.entry_path_tol.get()), float(self.entry_goal_tol.get())
+            if not np.all(np.isfinite([ptol, gtol])) or min(ptol, gtol) < 0:
+                raise ValueError('Tolerancias invalidas')
             self._node.pedir_cartesian_trajectory(
-                p0, R0, p1, R1,
-                n_steps, self._traj_dt(),
-                self._pending_vel, self.var_elbow.get(),
-                path_tol, goal_tol, _on_traj)
-        else:
-            self.lbl_ik_warn.configure(text='Calculando IK...',
-                                        text_color=COL['warn'])
-            self._node.pedir_ik(
-                x, y, z, beta_deg, q5_deg, q6_deg,
-                elbow     = self.var_elbow.get(),
-                vel_pct   = self._pending_vel,
-                on_result = self._on_ik_result,
-            )
+                p0, R0, p1, R1, self._traj_steps(), self._traj_dt(), self._vel(), '',
+                ptol, gtol, self._on_cartesian_result)
+        except (ValueError, TypeError) as exc:
+            self.lbl_ik_warn.configure(text=str(exc), text_color=COL['err'])
+
+    def _preview_ik(self):
+        try:
+            p, R = self._read_pose_target()
+            self._node.pedir_ik_pose(p, R, '', self._on_ik_result)
+        except (ValueError, TypeError) as exc:
+            self.lbl_ik_warn.configure(text=str(exc), text_color=COL['err'])
 
     def _on_ik_result(self, success: bool, q_rad: list, mensaje: str):
-        """Llamado desde el thread de ROS — guarda resultado para _loop_ui."""
+        """Preview only: an IK response never queues or publishes a move."""
         if success:
-            self._pending_ik_q   = q_rad
-            self._pending_ik_msg = ('Pose calculada — enviando...', COL['ok'])
-            self._node.publicar_preview(q_rad)
-        else:
-            self._pending_ik_q   = None
-            self._pending_ik_msg = (f'IK fallido: {mensaje}', COL['err'])
+            self._node.mostrar_preview(q_rad)
+        self._pending_ik_msg = (('Preview calculado; no se ha movido el brazo' if success else mensaje),
+                                COL['ok'] if success else COL['err'])
 
     def _home(self):
         q_zero = np.zeros(len(self._node.joint_order))
         self._node.publicar_joint_cmd(q_zero, self._vel())
-        self._node.publicar_preview(q_zero)
+        self._node.mostrar_preview(q_zero)
         for i, sld in enumerate(self._fk_sliders):
             sld.set(0)
             self._fk_val_lbls[i].configure(text='0.0°')
@@ -2010,14 +1918,13 @@ class App(ctk.CTk):
         # ── Camara frontal + QR/senal (lado derecho, siempre visible) ──
         self._refresh_camera()
 
-        joint_order = self._node.joint_order
         ax_st = self._node.ax_status
         ex_st = self._node.ex_status
         # Basta un bus conectado para operar (hardware parcial en pruebas)
         con   = ax_st['conectado'] or ex_st['conectado']
         eme   = ax_st['emergencia'] or ex_st['emergencia']
         cal   = ax_st['modo_calib'] or ex_st['modo_calib']
-        listo = con and not eme and not cal
+        listo = self._node.motion_ready
 
         # Estado por driver
         self.lbl_ax.configure(
@@ -2038,21 +1945,21 @@ class App(ctk.CTk):
             fg_color='#922b21' if con else ['#3a7ebf', '#1f538d'])
 
         # Botones segun estado
-        self.btn_estop.configure(      state='normal' if con   else 'disabled')
+        self.btn_estop.configure(      state='normal')
         self.btn_resume.configure(     state='normal' if eme   else 'disabled')
         self.btn_home.configure(       state='normal' if listo else 'disabled')
         self.btn_fk.configure(         state='normal' if listo else 'disabled')
-        self.btn_calib_start.configure(state='normal' if (con and not eme and not cal)
+        self.btn_calib_start.configure(state='normal' if (con and not eme and not self._node.motion_busy and not self._node._maintenance_pending)
                                                        else 'disabled')
-        self.btn_calib_ok.configure(   state='normal' if cal   else 'disabled')
-        self.btn_rescue_neg.configure( state='normal' if con   else 'disabled')
-        self.btn_rescue_pos.configure( state='normal' if con   else 'disabled')
+        self.btn_calib_ok.configure(   state='normal' if self._node.maintenance_ready else 'disabled')
+        self.btn_rescue_neg.configure(state='normal' if self._node.maintenance_ready else 'disabled')
+        self.btn_rescue_pos.configure(state='normal' if self._node.maintenance_ready else 'disabled')
         self.btn_reset_alerts.configure(state='normal' if con  else 'disabled')
         for btn in self._jog_buttons:
-            btn.configure(state='normal' if cal else 'disabled')
+            btn.configure(state='normal' if self._node.maintenance_ready else 'disabled')
 
         # IK: solo si listo y no hay IK en curso
-        ik_en_curso = self.lbl_ik_warn.cget('text') == 'Calculando IK...'
+        ik_en_curso = self._node.motion_busy
         pose = self._node.pose_actual
         self.btn_ik.configure(
             state='normal' if (listo and not ik_en_curso) else 'disabled')
@@ -2086,15 +1993,20 @@ class App(ctk.CTk):
         elif cal:
             self.lbl_global.configure(text='CALIBRACION ACTIVA',
                                       text_color=COL['warn'])
+        elif self._node._maintenance or self._node.cartesian_state['maintenance']:
+            self.lbl_global.configure(text='MANTENIMIENTO: iniciar y confirmar calibracion para liberar',
+                                      text_color=COL['warn'])
         else:
             self.lbl_global.configure(text='')
 
         # Angulos actuales
         q = self._node.q_actual
+        with self._node._lock:
+            recent = time.monotonic() - self._node._joint_seen < 1.0
         for i, lbl in enumerate(self._lbl_angs):
-            lbl.configure(text=f'actual: {np.degrees(q[i]):.2f}°')
+            lbl.configure(text=f'actual: {np.degrees(q[i]):.2f}°' if recent[i] else 'sin feedback reciente')
         for i, lbl in enumerate(self._lbl_jog_angs):
-            lbl.configure(text=f'{np.degrees(q[i]):.2f}°')
+            lbl.configure(text=f'{np.degrees(q[i]):.2f}°' if recent[i] else '—')
 
         # Pose del efector
         if pose is not None:
@@ -2104,6 +2016,10 @@ class App(ctk.CTk):
                 text=f'x {p.x:+.3f} | y {p.y:+.3f} | z {p.z:+.3f} m')
             self.lbl_pose_rpy.configure(
                 text=f'R {roll:+.1f}° | P {pitch:+.1f}° | Y {yaw:+.1f}°')
+
+        else:
+            self.lbl_pose_xyz.configure(text='Sin pose reciente')
+            self.lbl_pose_rpy.configure(text='R — | P — | Y —')
 
         # Mensajes pendientes del thread ROS
         if self._pending_jog_msg is not None:
@@ -2120,17 +2036,13 @@ class App(ctk.CTk):
             text, color = self._pending_teleop_msg
             self.lbl_tp_msg.configure(text=text, text_color=color)
             self._pending_teleop_msg = None
-            self._joy_ik_inflight = False   # llego resultado: liberar para el siguiente paso
 
-        if self._pending_teleop_q is not None:
-            if self._pending_teleop_commit is not None:
-                self._tp_p, self._tp_R = self._pending_teleop_commit
-                self._pending_teleop_commit = None
-                self._update_tp_label()
-            self._node.publicar_joint_cmd(
-                np.array(self._pending_teleop_q), self._vel())
-            self._node.publicar_preview(np.array(self._pending_teleop_q))
-            self._pending_teleop_q = None
+        if self._pending_teleop_commit is not None:
+            self._tp_p, self._tp_R = self._pending_teleop_commit
+            if self.var_stab.get():
+                self._stab_R = self._tp_R.copy()
+            self._pending_teleop_commit = None
+            self._update_tp_label()
 
         # ── Teleop por joystick (solo en la pestana Teleop) ──
         if self.tabs.get() == 'Teleop':
@@ -2140,12 +2052,6 @@ class App(ctk.CTk):
             texto, color = self._pending_ik_msg
             self.lbl_ik_warn.configure(text=texto, text_color=color)
             self._pending_ik_msg = None
-
-        if self._pending_ik_q is not None:
-            self._node.publicar_joint_cmd(
-                np.array(self._pending_ik_q), self._pending_vel)
-            self._pending_ik_q = None
-            self.after(3000, lambda: self.lbl_ik_warn.configure(text=''))
 
         # ── Estado trayectoria cartesiana (feedback /cartesian/state) ──
         cs = self._node.cartesian_state
@@ -2164,12 +2070,14 @@ class App(ctk.CTk):
                 text_color=col)
             self.btn_ik.configure(state='disabled')
         elif self._last_cart_in_prog and not in_prog:
-            # Flanco bajada: trayectoria terminó → re-habilitar btn y marcar 100%
-            self.traj_progress.set(1.0)
+            # A cancelled/failed plan must not be reported as successfully completed.
+            completed = cs['progress'] >= 1.0 and cs['within_path_tol']
+            self.traj_progress.set(cs['progress'])
             self.lbl_traj_state.configure(
-                text=f'Completada  err {cs["pos_error"]*1000:.1f}mm',
-                text_color=COL['ok'])
-            self.btn_ik.configure(state='normal')
+                text=('Completada' if completed else 'Detenida/cancelada; revisar estado')
+                     + f'  err {cs["pos_error"]*1000:.1f}mm',
+                text_color=COL['ok'] if completed else COL['warn'])
+            self.btn_ik.configure(state='normal' if self._node.motion_ready else 'disabled')
         self._last_cart_in_prog = in_prog
 
         # Estado de servos: sondear ~cada 1.4 s solo si la pestaña esta activa
@@ -2181,8 +2089,10 @@ class App(ctk.CTk):
         else:
             self._status_poll_count = 12   # refresca al entrar a la pestaña
 
-        if self._pending_status:
-            for name, fila in self._pending_status.items():
+        with self._pending_lock:
+            pending_status, self._pending_status = self._pending_status, {}
+        if pending_status:
+            for name, fila in pending_status.items():
                 row = self._estado_rows.get(name)
                 if row is None:
                     continue
@@ -2206,7 +2116,6 @@ class App(ctk.CTk):
                 row['alerta'].configure(
                     text=alerta if alerta else 'OK',
                     text_color=COL['err'] if alerta else COL['ok'])
-            self._pending_status = {}
 
         # Visualizacion 3D
         self._redraw_arm()
@@ -2214,17 +2123,12 @@ class App(ctk.CTk):
         self.after(120, self._loop_ui)
 
     def on_closing(self):
+        if self._node._pub_arm_active is not None:
+            self._node.destroy_timer(self._node._active_timer)
+            self._node._pub_arm_active.publish(Bool(data=False))
         self._node.desconectar()
+        self._arm_canvas.close()
         self.destroy()
-        # Si esta GUI fue lanzada desde el dashboard (via `ros2 launch ...` con
-        # start_new_session), baja TODO el grupo de proceso del arm_station
-        # (cinematica + cartesian + gui) para que el dashboard reaparezca.
-        # En ejecucion standalone (sim_only) tambien cierra el launch, que es
-        # el comportamiento esperado al cerrar la ventana.
-        try:
-            os.killpg(os.getpgid(os.getpid()), signal.SIGINT)
-        except Exception:
-            pass
 
 
 # ─────────────────────────────────────────────────────────────
@@ -2242,8 +2146,12 @@ def main(args=None):
     app = App(node)
     # La X de la ventana del brazo NO mata el proceso (el dashboard lo precarga
     # y es dueno del ciclo de vida): solo pide volver al dashboard (se oculta).
-    app.protocol('WM_DELETE_WINDOW', node.pedir_dashboard)
-    app.mainloop()
+    app.protocol('WM_DELETE_WINDOW', node.pedir_dashboard if node.managed_by_dashboard else app.on_closing)
+    try:
+        app.mainloop()
+    finally:
+        app._arm_canvas.close()
+        app._arm_canvas._worker.join(timeout=8)
 
     # Detener primero el contexto para que el thread de spin salga limpio
     rclpy.try_shutdown()

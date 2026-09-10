@@ -33,7 +33,7 @@ from std_srvs.srv import Trigger
 from rescue_robot_core.servos.params import leer_servos_params
 from rescue_robot_core.servos.wheel_encoder import WheelEncoder
 from rescue_interfaces.msg import ArmStatus
-from rescue_interfaces.srv import ServoCommand, RegisterServo
+from rescue_interfaces.srv import ServoCommand, RegisterServo, ServoStatus
 
 VEL_MAX_DEG_PER_SEC = 120.0
 
@@ -61,12 +61,16 @@ class SimDriverNode(Node):
         self._vel_pct: dict[str, float]            = {}
         self._id_map:  dict[int, str]              = {}
         self._lock = threading.RLock()
+        self._shutdown_event = threading.Event()
 
         self._cargar_servos_yaml()
 
         self._pub_js     = self.create_publisher(JointState, '/joint_states', 10)
         self._pub_status = self.create_publisher(
             ArmStatus, f'/{self._ns}/status', 10)
+        self._last_status_message = ''
+        self._status_heartbeat = self.create_timer(
+            0.5, lambda: self._publicar_status(self._last_status_message))
 
         self.create_subscription(
             JointState, f'/{self._ns}/joint_cmd', self._cb_joint_cmd, 10)
@@ -110,8 +114,31 @@ class SimDriverNode(Node):
         self.create_service(ServoCommand,  f'/{ns}/jog',               self._srv_jog)
         self.create_service(ServoCommand,  f'/{ns}/rescue_pulse',      self._srv_rescue_pulse)
         self.create_service(RegisterServo, f'/{ns}/register_servo',    self._srv_register_servo)
+        self.create_service(ServoStatus, f'/{ns}/servo_status', self._srv_status)
+        self.create_service(Trigger, f'/{ns}/reset_alerts', self._srv_reset_alerts)
+
+    def _srv_status(self, req, res):
+        with self._lock:
+            res.ids = list(self._id_map)
+            res.nombres = list(self._id_map.values())
+        n = len(res.ids)
+        res.success = True
+        res.responde = [self._conectado] * n
+        res.torque_on = [self._conectado and not self._emergencia] * n
+        res.error_byte = [0] * n
+        res.alerta = ['SIM: temperatura/voltaje no modelados'] * n
+        res.temperatura = [0] * n
+        res.voltaje = [0.0] * n
+        res.mensaje = 'Estado simulado; no representa telemetria fisica'
+        return res
+
+    def _srv_reset_alerts(self, req, res):
+        res.success = True
+        res.message = 'SIM: no se modelan alarmas fisicas; emergencia no modificada'
+        return res
 
     def _publicar_status(self, mensaje: str = ''):
+        self._last_status_message = mensaje
         msg = ArmStatus()
         msg.header.stamp = self.get_clock().now().to_msg()
         msg.conectado    = self._conectado
@@ -208,6 +235,10 @@ class SimDriverNode(Node):
         return res
 
     def _srv_rescue_pulse(self, req, res):
+        if self._emergencia:
+            res.success = False
+            res.mensaje = 'Paro de emergencia activo'
+            return res
         if not self._conectado:
             res.success = False
             res.mensaje = 'Driver no conectado'
@@ -256,7 +287,7 @@ class SimDriverNode(Node):
     # ── Loop de control ──────────────────────────────────────────────
 
     def _bucle_control(self):
-        while True:
+        while not self._shutdown_event.is_set():
             if not self._running or not self._conectado or self._emergencia:
                 time.sleep(0.05)
                 continue
@@ -280,7 +311,8 @@ class SimDriverNode(Node):
                             self._pos[nombre] = (current + math.copysign(step, error)) % 360.0
 
                     js.name.append(nombre)
-                    js.position.append(np.radians(self._pos[nombre]))
+                    # Match the signed feedback convention of the real encoder.
+                    js.position.append(np.radians((self._pos[nombre] + 180.0) % 360.0 - 180.0))
 
             if js.name:
                 self._pub_js.publish(js)
@@ -290,6 +322,8 @@ class SimDriverNode(Node):
     # ── Cleanup ──────────────────────────────────────────────────────
 
     def destroy_node(self):
+        self._shutdown_event.set()
+        self._ctrl_thread.join(timeout=1)
         self._desconectar()
         super().destroy_node()
 

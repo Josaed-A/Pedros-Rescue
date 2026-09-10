@@ -69,13 +69,15 @@ El robot publica `/real_speed_abs` para que el dashboard vea la velocidad real.
 ```text
 GUI del brazo (rescue_command_station/arm/gui_node)   [se abre desde el dashboard]
     -> /compute_ik_pose, /cartesian/*   (cinematica_node, cartesian_node — PC)
+    -> /arm/manual_joint_cmd -> cartesian_node (arbitraje)
     -> /ax12a/joint_cmd  +  /ex106/joint_cmd
     -> rescue_robot_core / dynamixel_bus_node + ex106_driver_node  (Pi)
     -> servos AX-12A (brazo) + EX-106+ (hombro)
     <- /arm/joint_states -> FK -> /end_effector_pose
 ```
 
-- IK numérica por Jacobiano (damped least squares); la GUI tiene vista 3D + pinza.
+- Motor 6R Python suministrado (FK/IK de pose y trayectorias), compartido con el simulador.
+- La GUI reutiliza el Canvas original mediante Chromium/Playwright; preparación, geometría local conservada y pendientes en [ARM_6R.md](src/rescue_command_station/ARM_6R.md).
 - `/joint_states` del brazo se remapea a `/arm/joint_states` para no contaminar el `robot_state_publisher` de la base.
 
 ## Flujo de las patas (locomoción)
@@ -152,7 +154,7 @@ La prueba actual valida red PC-Pi, RViz, `slam_toolbox`, dashboard, motores y no
 
 ## Requisitos
 
-- PC: [requirements_pc.txt](requirements_pc.txt) (incluye customtkinter, matplotlib para la GUI del brazo)
+- PC: [requirements_pc.txt](requirements_pc.txt) (incluye customtkinter, matplotlib y Playwright; Chromium se instala aparte según ARM_6R.md)
 - Raspberry: [requirements_raspberry.txt](requirements_raspberry.txt) (incluye dynamixel-sdk, pyserial)
 - Apt/ROS: [system_requirements_pc.txt](system_requirements_pc.txt), [system_requirements_raspberry.txt](system_requirements_raspberry.txt)
 - Reglas udev de hardware: [99-pedros-rescue.rules](99-pedros-rescue.rules)

@@ -1,0 +1,66 @@
+[
+  [
+    "requirements_pc.txt",
+    "installed supplied file"
+  ],
+  [
+    "src/rescue_command_station/config/arm.yaml",
+    "retained five local geometry values; shared model/configuration structure from delivery"
+  ],
+  [
+    "src/rescue_command_station/launch/arm_station.launch.py",
+    "installed supplied file"
+  ],
+  [
+    "src/rescue_command_station/package.xml",
+    "installed supplied file"
+  ],
+  [
+    "src/rescue_command_station/rescue_command_station/arm/cartesian_controller.py",
+    "installed supplied file"
+  ],
+  [
+    "src/rescue_command_station/rescue_command_station/arm/cartesian_node.py",
+    "installed supplied file"
+  ],
+  [
+    "src/rescue_command_station/rescue_command_station/arm/cinematica_node.py",
+    "replaced previous solver/adapter; original preserved in test/cinematica"
+  ],
+  [
+    "src/rescue_command_station/rescue_command_station/arm/gui_node.py",
+    "installed supplied file"
+  ],
+  [
+    "src/rescue_command_station/rescue_command_station/arm/kinematics.py",
+    "replaced previous solver/adapter; original preserved in test/cinematica"
+  ],
+  [
+    "src/rescue_command_station/setup.py",
+    "installed supplied file"
+  ],
+  [
+    "src/rescue_command_station/ARM_6R.md",
+    "installed supplied file"
+  ],
+  [
+    "src/rescue_command_station/rescue_command_station/arm/configuration.py",
+    "installed supplied file"
+  ],
+  [
+    "src/rescue_command_station/rescue_command_station/arm/motion.py",
+    "installed supplied file"
+  ],
+  [
+    "src/rescue_command_station/rescue_command_station/arm/simulator.py",
+    "installed supplied file"
+  ],
+  [
+    "src/rescue_command_station/test/test_arm_6r.py",
+    "installed supplied file"
+  ],
+  [
+    "src/rescue_command_station/test/test_executor_logic.py",
+    "installed supplied file"
+  ]
+]

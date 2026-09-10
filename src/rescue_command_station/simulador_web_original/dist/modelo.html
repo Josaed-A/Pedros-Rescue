@@ -1,0 +1,120 @@
+<!doctype html><html lang="es"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Modelo cinemático · Brazo 6R</title><link rel="stylesheet" href="style.css"><style>article{max-width:940px;margin:32px auto;padding:0 24px 60px;line-height:1.8}article h1{font-size:30px;margin:30px 0 10px}article h2{font-size:23px;margin:38px 0 12px;color:#7cebdc}article h3{font-size:17px}article p,article li{font-size:16px;color:#c3cfe0}.eq{background:#111e30;border-left:3px solid #52dfd0;padding:18px 22px;overflow:auto;white-space:pre;font:15px/1.9 ui-monospace,monospace;margin:18px 0}table{width:100%;border-collapse:collapse;margin:20px 0;font-size:14px}th,td{text-align:left;padding:11px;border-bottom:1px solid #32435a}th{color:#88ebdf}code{color:#90eadf}aside{background:#2a251f;border-left:3px solid #f4b269;padding:14px 20px;margin:25px 0}.scroll{overflow:auto}.lede{font-size:18px!important}@media(max-width:600px){article{padding:0 18px 35px}.eq{font-size:13px;padding:12px}article h1{font-size:25px}}</style></head><body><header><div class="brand"><span class="mark">6R</span><div><h1>Modelo y ecuaciones</h1><p>Derivación para el montaje supuesto</p></div></div><a href="index.html">Volver al simulador</a></header><article>
+<h1>Cinemática directa e inversa</h1><p class="lede">Seis articulaciones rotacionales, con tres ejes paralelos entre la base y la muñeca. Longitudes editables, posición de la punta y orientación completa.</p>
+<aside><strong>Modelo corregido con la referencia del montaje.</strong><p>La postura inicial tiene los tres eslabones verticales y la barra horizontal. J5 gira sobre Z global en esa postura y J6 sobre X global. La barra y la cámara están unidas a la parte que gira con J6. Sus medidas y la orientación de la cámara se parametrizan; no se han deducido dimensiones ni una calibración de la fotografía.</p></aside>
+<h2>1. Parámetros, ejes y ceros</h2><p>Se usan metros y radianes en el cálculo, centímetros y grados en los controles. El origen está en el centro de giro de la base; +Z es vertical. <strong>q₁ = … = q₆ = 0 corresponde a los tres eslabones hacia +Z y la barra hacia +X</strong>. Esta convención sustituye el cero horizontal de la primera versión. Las matrices actúan sobre vectores columna.</p>
+<div class="scroll"><table><thead><tr><th>Articulación</th><th>Eje local de giro</th><th>Traslación posterior</th></tr></thead><tbody><tr><td>J1 · base</td><td>+Z</td><td>h sobre Z</td></tr><tr><td>J2 · hombro</td><td>−Y</td><td>L₁ sobre Z</td></tr><tr><td>J3 · codo</td><td>−Y</td><td>L₂ sobre Z</td></tr><tr><td>J4 · tercer eslabón</td><td>−Y</td><td>L₃ sobre Z</td></tr><tr><td>J5 · muñeca</td><td>+Z</td><td>e₅₆ sobre X</td></tr><tr><td>J6 · barra y cámara</td><td>+X</td><td>Marcos rígidos de herramienta y cámara</td></tr></tbody></table></div>
+<p>Datos confirmados: <strong>L₁ = 0,30 m, L₂ = 0,30 m, L₃ = 0,10 m</strong>. h eleva el hombro y e₅₆ representa una separación axial desde J5 a J6; ambos empiezan en cero, sin medir. La punta de barra está a d sobre +X del marco 6. Para visualizar el montaje se usan <strong>d = 0,12 m y centro de cámara c = (0,06, 0, 0,04) m</strong>, valores de ejemplo editables. La orientación fija de la cámara empieza en identidad y debe medirse o calibrarse; no se presupone cuál es su dirección óptica real. Las dimensiones dibujadas de las cajas son ilustrativas y no se usan para colisiones.</p><p>Los giros positivos de J2–J4 son alrededor de −Y local. Desde cero, J2 positivo inclina el brazo hacia −X con J1 = 0. La “rotación como la base” de J5 se refiere al eje local: al inclinar J2–J4, ese eje también se inclina.</p>
+<h2>2. Transformaciones elementales</h2><p>Con c = cos(a) y s = sin(a):</p>
+<pre class="eq">          ⎡1  0   0⎤              ⎡ c  0  s⎤              ⎡c −s  0⎤
+Rx(a) =   ⎢0  c  −s⎥    Ry(a) =   ⎢ 0  1  0⎥    Rz(a) =   ⎢s  c  0⎥
+          ⎣0  s   c⎦              ⎣−s  0  c⎦              ⎣0  0  1⎦
+
+          ⎡R  p⎤
+T(R,p) =  ⎣0  1⎦       Tx(a): p = (a,0,0)ᵀ;  Tz(a): p = (0,0,a)ᵀ</pre>
+<h2>3. Cinemática directa</h2><p>La cadena homogénea exacta usada por el simulador es:</p>
+<pre class="eq">T₀₆ = Rz(q₁) Tz(h)
+      Ry(−q₂) Tz(L₁)
+      Ry(−q₃) Tz(L₂)
+      Ry(−q₄) Tz(L₃)
+      Rz(q₅) Tx(e₅₆) Rx(q₆)
+
+T₀ₜ = T₀₆ Tx(d)                  punta de barra
+T₀꜀ = T₀₆ T₆꜀                    cámara
+T₆꜀ = T(R₆꜀, c)
+R₆꜀ = Rz(yaw꜀) Ry(pitch꜀) Rx(roll꜀)</pre>
+<p>En esta cadena cada R se entiende embebida en una matriz homogénea 4 × 4. Son transformaciones elementales explícitas; no es una tabla de Denavit–Hartenberg.</p>
+<p>Definiendo la inclinación acumulada β respecto al cero vertical, el alcance radial r y la altura s del centro de J5:</p>
+<pre class="eq">β = q₂ + q₃ + q₄
+r = −L₁ sin(q₂) − L₂ sin(q₂+q₃) − L₃ sin(β)
+s =  L₁ cos(q₂) + L₂ cos(q₂+q₃) + L₃ cos(β)
+
+pᵥ = (r cos(q₁), r sin(q₁), h+s)ᵀ
+R₆ = Rz(q₁) Ry(−β) Rz(q₅) Rx(q₆)
+p₆ = pᵥ + R₆ (e₅₆,0,0)ᵀ
+pₜ = p₆ + R₆ (d,0,0)ᵀ             Rₜ = R₆
+p꜀ = p₆ + R₆ (cₓ,cᵧ,c_z)ᵀ         R꜀ = R₆ R₆꜀</pre>
+<p>La posición explícita de la punta de barra es:</p>
+<pre class="eq">xₜ = r cos(q₁) + (e₅₆+d) [cos(q₁) cos(β) cos(q₅) − sin(q₁) sin(q₅)]
+yₜ = r sin(q₁) + (e₅₆+d) [sin(q₁) cos(β) cos(q₅) + cos(q₁) sin(q₅)]
+zₜ = h + s + (e₅₆+d) sin(β) cos(q₅)</pre>
+<p><strong>J6 gira tanto la barra como la cámara.</strong> La punta de barra permanece fija al cambiar solo q₆ porque está sobre el eje X de giro; su orientación sí cambia. La cámara no permanece fija si cᵧ o c_z son distintos de cero: su centro describe un círculo de radio √(cᵧ²+c_z²) alrededor de ese eje. T₆꜀ permanece constante en todos los movimientos. El simulador calcula y muestra siempre ambas poses.</p>
+<h2>4. Cinemática inversa analítica: pose completa</h2><p>La entrada es una posición deseada p<sub>d</sub> y una matriz de orientación deseada R<sub>d</sub>. Dar solamente X, Y y Z no determina de forma única los seis ángulos. En la interfaz, la orientación se introduce como roll, pitch y yaw:</p>
+<pre class="eq">Rᵈ = Rz(yaw) Ry(pitch) Rx(roll)</pre>
+<h3>Paso A · Recuperar el centro de muñeca y las ramas de base</h3>
+<p>El punto controlado puede ser la punta de barra o el centro de cámara. Primero se convierte el objetivo de ese marco a una orientación deseada R₆ᵈ y al centro de J5:</p>
+<pre class="eq">Si controlas la herramienta: R₆ᵈ = Rᵈ;          b = (e₅₆+d,0,0)ᵀ
+Si controlas la cámara:      R₆ᵈ = Rᵈ R₆꜀ᵀ;    b = (e₅₆+cₓ,cᵧ,c_z)ᵀ
+
+pᵥ = pᵈ − R₆ᵈ b = (xᵥ,yᵥ,zᵥ)ᵀ
+
+q₁ = atan2(yᵥ,xᵥ)        o        atan2(yᵥ,xᵥ) + π
+r  = cos(q₁) xᵥ + sin(q₁) yᵥ
+s  = zᵥ − h</pre>
+<p>Se conserva el signo de r para la rama de base opuesta. Usar solo √(xᵥ²+yᵥ²) en ambas ramas perdería soluciones o produciría una geometría incorrecta.</p>
+<h3>Paso B · Extraer la inclinación y los ángulos de muñeca</h3><p>Para cada q₁, calcula B = Rz(−q₁)R₆ᵈ. Los subíndices de B se numeran aquí desde 1, como en matemáticas.</p>
+<pre class="eq">B = Ry(−β) Rz(q₅) Rx(q₆)
+c₅⁺ = √(B₁₁² + B₃₁²)
+
+β  = atan2(B₃₁, B₁₁)
+q₅ = atan2(B₂₁, c₅⁺)
+q₆ = atan2(−B₂₃, B₂₂)
+
+Segunda rama equivalente:
+(β′, q₅′, q₆′) = (β+π, π−q₅, q₆+π)</pre>
+<p>Estas fórmulas aplican si c₅⁺ ≠ 0. En el código JavaScript, B₁₁ corresponde a <code>B[0][0]</code>.</p>
+<h3>Paso C · Resolver los dos primeros eslabones</h3><p>Al restar el tercer eslabón queda un problema planar de dos eslabones, resuelto por la ley de cosenos.</p>
+<pre class="eq">α = π/2 + β
+u = r − L₃ cos(α) = r + L₃ sin(β)
+v = s − L₃ sin(α) = s − L₃ cos(β)
+D = (u²+v²−L₁²−L₂²) / (2 L₁ L₂)
+
+q₃ = +acos(D)        o        −acos(D)
+q₂ = atan2(v,u) − atan2(L₂ sin(q₃), L₁+L₂ cos(q₃)) − π/2
+q₄ = β − q₂ − q₃</pre>
+<p>Si |D| &gt; 1, esa rama no alcanza la pose. Equivale a exigir |L₁−L₂| ≤ √(u²+v²) ≤ L₁+L₂. El cálculo tolera un pequeño error de coma flotante en los límites ±1.</p>
+<h3>Paso D · Filtrar y comprobar</h3><p>En una configuración regular hay hasta <strong>8 ramas geométricas</strong>: dos de base × dos de orientación × dos de codo. Se ajustan los ángulos por vueltas de 2π a los límites configurados, se eliminan duplicados y se comprueba cada solución con la directa. Si los límites incluyen varias vueltas completas, se conserva el representante más cercano a la semilla de cada rama; no se enumeran todas las vueltas equivalentes.</p><p>El simulador muestra primero la solución de menor distancia euclídea a los ángulos iniciales de la búsqueda. Cambiar de rama puede causar grandes cambios articulares; seleccionar una solución es una comparación geométrica, no una trayectoria de movimiento.</p>
+<h2>5. Inversa numérica: solo posición</h2><p>Se minimiza e = p<sub>d</sub> − p(q), dejando la orientación libre. Para cada articulación, aᵢ es su eje unitario y oᵢ su origen, ambos expresados en el marco de la base:</p>
+<pre class="eq">Jᵢ = aᵢ × [p(q) − oᵢ]         J es de tamaño 3 × 6
+Δq = Jᵀ (J Jᵀ + λ² I)⁻¹ e
+q ← limitar(q + α Δq)</pre>
+<p>Se usa amortiguamiento λ = 0,003 con longitudes en metros, un incremento máximo de 0,25 rad por articulación y una búsqueda de paso α. Se prueba primero la postura actual y luego hasta 23 semillas adicionales deterministas, con 240 iteraciones máximas por semilla. El umbral de éxito es 10⁻⁵ m = 0,01 mm. Esa tolerancia es numérica, no una precisión prometida del brazo físico.</p><p>Si la búsqueda falla, se conserva la postura actual y se informa el mejor error encontrado. Un fallo numérico no demuestra por sí solo que el objetivo sea inalcanzable.</p>
+<h2>6. Singularidades y límites del modelo</h2>
+<ul><li><strong>Muñeca:</strong> cos(q₅) = 0. β y q₆ quedan acoplados y la extracción regular no es única. El simulador prueba la inclinación de la semilla, candidatos de los límites geométricos de alcance y una malla de 2° para obtener representantes.</li><li><strong>Centro de muñeca en el eje de base:</strong> xᵥ = yᵥ = 0. La posición no determina q₁. Se prueban la semilla, candidatos deducidos de la orientación y una malla de base de 2°. Durante trayectorias, se prioriza mantener la base de la solución anterior si produce una inversa válida; no se buscan todas las familias.</li><li><strong>Codo:</strong> sin(q₃) = 0. Las ramas se unen o el brazo se pliega. Con L₁ = L₂ y u = v = 0 hay una familia de q₂; el algoritmo toma un representante, sin recorrer toda la familia.</li><li><strong>Ángulos de Euler:</strong> pitch = ±90° hace no única la representación roll–yaw. Es una singularidad de las coordenadas de orientación y no equivale necesariamente a una singularidad mecánica.</li></ul>
+<p>En las familias singulares el muestreo no es exhaustivo, especialmente con límites muy estrechos. Si no encuentra una solución, no se certifica imposibilidad. El indicador del simulador avisa también de proximidad al codo extendido o plegado, al eje de base y a la singularidad de muñeca.</p>
+<p>Para pasar a servos reales hay que medir ceros, sentido de giro, intervalos mecánicos y desplazamientos de montaje. Una calibración elemental sería θ<sub>servo,i</sub> = θ<sub>cero,i</sub> + signoᵢ qᵢ, con unidades consistentes; el paso de ángulo a pulso depende del servo. El simulador no envía comandos al hardware.</p>
+<h2>7. Cómo confirmar ambas cinemáticas</h2><ol><li>Pulsa <strong>Inicial vertical · 0°</strong>: J5 debe coincidir con Z global y J6 con X global. Ajusta las longitudes, los límites y el montaje de cámara.</li><li>Mueve solo J6: la barra y la cámara deben girar juntas. La punta de barra permanece sobre su eje; el centro de cámara cambia de posición si tiene desplazamiento lateral.</li><li>Selecciona qué punto controlas: <strong>punta de barra</strong> o <strong>centro de cámara</strong>. Esto determina a qué pose se aplican la inversa, el objetivo naranja, los errores y la recta cartesiana.</li><li>Pulsa <strong>Comprobar ciclo</strong>. La directa calcula la pose seleccionada, la inversa recupera ángulos y la directa reconstruye la pose. Los ángulos pueden ser distintos si hay varias ramas.</li><li>Para explorar rectas laterales usa primero <strong>Postura de prueba</strong>. Desde el cero totalmente extendido, una traslación horizontal a altura constante es inalcanzable, aunque sea pequeña.</li></ol>
+<pre class="eq">Error de posición = ‖p(q*) − pᵈ‖
+E = Rᵈ R(q*)ᵀ
+Error angular = atan2(½‖(E₃₂−E₂₃,E₁₃−E₃₁,E₂₁−E₁₂)‖,
+                      ½[tr(E)−1])</pre>
+<p>La implementación calcula la orientación con matrices, incluso cuando muestra ángulos de Euler. Las fórmulas de este documento se derivan para el montaje supuesto; la referencia general para transformaciones y cinemática inversa es <a href="https://modernrobotics.northwestern.edu/chapters/chapter6/" target="_blank" rel="noopener">Modern Robotics, capítulo 6, Kevin Lynch y Frank Park</a>.</p>
+<h2>8. Punto controlado y ejes del desplazamiento</h2>
+<p>Son dos elecciones diferentes. El <strong>punto controlado</strong> es lo que debe llegar al objetivo: punta de barra o centro de cámara. Los <strong>ejes del desplazamiento</strong> indican cómo interpretar ΔX, ΔY y ΔZ: herramienta, cámara o base. Se congela ese marco al pulsar el botón y se mantiene la orientación del punto controlado.</p>
+<pre class="eq">pᵦ = pₐ + R_F Δp_F
+Rᵦ = Rₐ
+
+R_F = Rₜ  si eliges ejes de herramienta
+R_F = R꜀  si eliges ejes de cámara
+R_F = I   si eliges ejes de base</pre>
+<p>Por ejemplo, con la cámara como punto controlado y ejes de herramienta, Δxₜ = +0,01 m desplaza el centro de cámara 1 cm según el eje rojo de la herramienta, manteniendo la orientación. Si usas los ejes de cámara, el desplazamiento sigue R꜀, que incluye la rotación fija R₆꜀ del montaje.</p>
+<p>Solo cuando los ejes elegidos son los del propio punto controlado se puede escribir directamente Tᵦ = Tₐ Trans(Δp). Para un desplazamiento en la base se suma el vector sin rotarlo. Los desplazamientos son vectores: no deben tratarse como puntos homogéneos con coordenada final 1.</p>
+<h2>9. Trayectorias de A a B</h2>
+<p>A es la postura actual al pulsar <strong>Generar A → B</strong>; B es el objetivo del panel de inversa. La generación comprueba el recorrido sin mover la postura inicial. <strong>Reproducir</strong> inicia la animación; <strong>Pausar</strong> permite inspeccionarla y <strong>Volver a A</strong> restaura su inicio. Al terminar, esa postura puede ser A del siguiente movimiento. Si cambias la geometría, los límites, los ángulos o el objetivo, el recorrido anterior se descarta.</p>
+<h3>Perfil temporal</h3><p>Se usa una duración T y una ley quíntica para el avance deseado. Su velocidad y aceleración de avance son cero al principio y al final:</p>
+<pre class="eq">τ = t/T                  0 ≤ τ ≤ 1
+s(t) = 10τ³ − 15τ⁴ + 6τ⁵
+ṡ(t) = (30τ² − 60τ³ + 30τ⁴)/T
+s̈(t) = (60τ − 180τ² + 120τ³)/T²</pre>
+<h3>Recta cartesiana</h3>
+<pre class="eq">p(t) = pₐ + s(t) [pᵦ − pₐ]
+R(t) = Rₐ exp( s(t) log(RₐᵀRᵦ) )</pre>
+<p>La orientación se implementa mediante interpolación esférica de cuaterniones (SLERP), escogiendo la rotación más corta. En desplazamientos relativos de traslación, Rᵦ = Rₐ y la orientación permanece fija. En el modo <strong>Solo posición</strong>, la orientación no está restringida.</p>
+<p>En cada muestra se resuelve la inversa usando la solución anterior como semilla y se escoge la rama cercana. Se refinan los intervalos si algún ángulo cambia más de 2° o si, al interpolar esos ángulos y aplicar la directa, el error cartesiano supera 0,05 mm o el angular supera 0,02°. Se evalúan los puntos a ¼, ½ y ¾ de cada intervalo, además de sus extremos. Los tiempos de las muestras pueden ser no uniformes debido a este refinamiento.</p>
+<p>La animación interpola los ángulos entre muestras. Por ello sigue una aproximación de la recta y del perfil temporal; las tolerancias mostradas son verificaciones discretas y no una demostración continua ni una garantía de precisión física. El perfil quíntico del objetivo no convierte automáticamente la interpolación articular por tramos en una función de aceleración continua. Tampoco elimina las singularidades del brazo.</p>
+<p>Si un punto intermedio no obtiene una inversa válida o no se consigue seguir una rama con la tolerancia requerida, se cancela la generación completa. El simulador no salta de rama ni aplica un recorrido parcial. Que A y B sean alcanzables no garantiza que la recta que los une también lo sea.</p>
+<h3>Interpolación articular</h3>
+<pre class="eq">q(t) = qₐ + s(t) [qᵦ − qₐ]</pre>
+<p>Se resuelve primero la inversa del objetivo B y luego se interpola cada ángulo. La animación evalúa directamente esta expresión. En este caso sí hay velocidad y aceleración articulares nulas en los extremos de la curva ideal. La punta generalmente sigue una curva y su orientación intermedia no se impone. Como los límites son intervalos y ambos extremos los cumplen, la interpolación articular permanece dentro de ellos.</p>
+<h3>Qué puedes inspeccionar y descargar</h3><p>La curva violeta muestra el recorrido del punto controlado, y el tramo verde marca el avance reproducido. Una línea discontinua muestra el recorrido del otro punto: cámara si controlas la barra, o punta de barra si controlas la cámara. El gráfico inferior representa q₁…q₆ frente al tiempo.</p><p>El CSV contiene 34 columnas: <code>time_s</code>, <code>q1_deg</code>…<code>q6_deg</code>, posición <code>active_x_m,active_y_m,active_z_m</code> y orientación <code>active_R11</code>…<code>active_R33</code> del punto controlado; las posiciones <code>tool_x_m</code>… y <code>camera_x_m</code>…; y la orientación <code>camera_R11</code>…<code>camera_R33</code>. Todas las poses están expresadas en la base. El nombre del archivo indica qué punto se controló. Los valores no son pulsos de servo y se deben respetar las marcas de tiempo, que pueden no ser equiespaciadas.</p><p>La velocidad articular máxima se calcula analíticamente en interpolación articular y por las pendientes entre muestras en la recta cartesiana. No se impone un límite de velocidad, aceleración ni torque del hardware. Aumentar la duración reduce la velocidad, pero no resuelve una colisión o una recta geométricamente inalcanzable. No se simulan imágenes, distorsión de lente, colisiones de la cámara ni calibración hand–eye. Estas trayectorias no constituyen un plan seguro para el robot físico.</p><p>Referencia general sobre rectas, interpolación de orientación y leyes temporales: <a href="https://modernrobotics.northwestern.edu/chapters/chapter9/" target="_blank" rel="noopener">Modern Robotics, capítulo 9, generación de trayectorias</a>.</p>
+<p><a href="index.html">Abrir el simulador →</a></p>
+</article></body></html>

@@ -1,58 +1,20 @@
-# ─────────────────────────────────────────────────────────────
-#  Parametros del brazo 6-DOF (lado PC): cinematica, simulacion, GUI.
-#  Los drivers de servos viven en rescue_robot_core/config/servos.yaml.
-# ─────────────────────────────────────────────────────────────
-
-cinematica:
+# Shared by kinematics, Cartesian execution, GUI and standalone simulator.
+# All distances: metres. All angles: radians. q=0: vertical links.
+/**:
   ros__parameters:
-    base_height:  0.14
-    L1:           0.22
-    L2:           0.20
-    L3:           0.12
-    tool_length:  0.10
-    joint_order:
-      - "Base"
-      - "Hombro"
-      - "Codo"
-      - "Munieca_P"
-      - "Munieca_Y"
-      - "Munieca_R"
-    # Joints cuyo giro fisico va al reves del modelo cinematico (STRING separado
-    # por comas; vacio = ninguno). Invierte la FK (sim) y el comando de IK/teleop.
-    sim_invert_joints: "Munieca_P"
-
-simulacion:
-  ros__parameters:
-    # Alcance maximo del brazo (m) para escalar los ejes.
-    reach: 0.74
-
-gui_control:
-  ros__parameters:
-    reach: 0.74
-    joint_order:
-      - "Base"
-      - "Hombro"
-      - "Codo"
-      - "Munieca_P"
-      - "Munieca_Y"
-      - "Munieca_R"
-    # Mapeo joint -> driver ("ax" | "ex") + ID de servo
-    joint_drivers:
-      Base:
-        driver: "ax"
-        id: 16
-      Hombro:
-        driver: "ex"
-        id: 1
-      Codo:
-        driver: "ax"
-        id: 18
-      Munieca_P:
-        driver: "ax"
-        id: 30
-      Munieca_Y:
-        driver: "ax"
-        id: 4
-      Munieca_R:
-        driver: "ax"
-        id: 6
+    base_height: 0.12  # preserved from local test/cinematica configuration
+    L1: 0.36  # preserved from local test/cinematica configuration
+    L2: 0.36  # preserved from local test/cinematica configuration
+    L3: 0.0  # preserved from local test/cinematica configuration
+    tool_length: 0.0  # preserved from local test/cinematica configuration
+    e56: 0.0          # provisional axial offset J5 -> J6
+    camera_xyz: [0.06, 0.0, 0.04]  # EXAMPLE, not hand-eye calibration
+    camera_rpy: [0.0, 0.0, 0.0]   # EXAMPLE mounting Rz(yaw) Ry(pitch) Rx(roll)
+    control_frame: tool
+    joint_order: [Base, Hombro, Codo, Munieca_P, Munieca_Y, Munieca_R]
+    # Logical driver angles -> model angles. Retained J4 sign from old setup.
+    # Independent of motor inversion/reduction in rescue_robot_core/servos.yaml.
+    model_sign: [1.0, 1.0, 1.0, -1.0, 1.0, 1.0]
+    # Retained software bounds; confirm mechanical limits after zero calibration.
+    joint_min: [-2.618, -3.142, -2.618, -2.618, -2.618, -2.618]
+    joint_max: [2.618, 3.142, 2.618, 2.618, 2.618, 2.618]

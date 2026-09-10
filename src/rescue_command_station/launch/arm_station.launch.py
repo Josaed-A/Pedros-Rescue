@@ -9,28 +9,43 @@
 # /joint_states del brazo se remapea a /arm/* para aislar el brazo de la base.
 
 from launch import LaunchDescription
-from launch.actions import DeclareLaunchArgument
+from launch.actions import DeclareLaunchArgument, RegisterEventHandler, EmitEvent
+from launch.event_handlers import OnProcessExit
+from launch.events import Shutdown
 from launch.conditions import IfCondition
 from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
+from launch_ros.parameter_descriptions import ParameterValue
 from ament_index_python.packages import get_package_share_directory
 import os
 
 
 JS_REMAP = [
     ('/joint_states',         '/arm/joint_states'),
-    ('/joint_states_preview', '/arm/joint_states_preview'),
 ]
 
 
 def generate_launch_description():
-    arm_cfg = os.path.join(
+    arm_default = os.path.join(
         get_package_share_directory('rescue_command_station'), 'config', 'arm.yaml')
-    servos_cfg = os.path.join(
+    servos_default = os.path.join(
         get_package_share_directory('rescue_robot_core'), 'config', 'servos.yaml')
     sim = LaunchConfiguration('sim')
+    arm_cfg = LaunchConfiguration('arm_config')
+    servos_cfg = LaunchConfiguration('servos_config')
+    shared = [arm_cfg, {'arm_config_path': arm_cfg, 'servos_config_path': servos_cfg}]
+    gui = Node(
+        package='rescue_command_station', executable='arm_gui_node',
+        name='gui_control', parameters=shared + [{'managed_by_dashboard':
+            ParameterValue(LaunchConfiguration('managed_by_dashboard'), value_type=bool)}],
+        remappings=JS_REMAP, condition=IfCondition(LaunchConfiguration('gui')),
+    )
 
     return LaunchDescription([
+        DeclareLaunchArgument('arm_config', default_value=arm_default),
+        DeclareLaunchArgument('servos_config', default_value=servos_default),
+        DeclareLaunchArgument('gui', default_value='true'),
+        DeclareLaunchArgument('managed_by_dashboard', default_value='false'),
         DeclareLaunchArgument(
             'sim', default_value='false',
             description='true = drivers simulados en el PC (sin Raspberry).'),
@@ -50,14 +65,13 @@ def generate_launch_description():
         # ── Brazo (PC) ──
         Node(
             package='rescue_command_station', executable='cinematica_node',
-            name='cinematica', parameters=[arm_cfg], remappings=JS_REMAP,
+            name='cinematica', parameters=shared, remappings=JS_REMAP,
         ),
         Node(
             package='rescue_command_station', executable='cartesian_node',
-            name='cartesian', parameters=[arm_cfg],
+            name='cartesian', parameters=shared, remappings=JS_REMAP,
         ),
-        Node(
-            package='rescue_command_station', executable='arm_gui_node',
-            name='gui_control', parameters=[arm_cfg], remappings=JS_REMAP,
-        ),
+        RegisterEventHandler(OnProcessExit(target_action=gui,
+            on_exit=[EmitEvent(event=Shutdown(reason='La GUI del brazo termino'))])),
+        gui,
     ])

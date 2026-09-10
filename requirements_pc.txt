@@ -1,6 +1,10 @@
 setuptools
 customtkinter
 matplotlib
+PyYAML
 
 # Runtime dependencies are installed from system_requirements_pc.txt.
 # OpenCV and NumPy are intentionally installed with apt for ROS 2 compatibility.
+
+# Original Canvas embedded in Tk; install its browser separately (ARM_6R.md).
+playwright>=1.40,<2

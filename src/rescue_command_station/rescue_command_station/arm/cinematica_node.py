@@ -1,32 +1,22 @@
-"""
-cinematica_node.py
-==================
-Nodo ROS2 — cinematica directa e inversa del brazo 6-DOF.
+"""ROS adapter of the delivered Python model.
 
-Suscribe /joint_states, calcula FK continuamente y publica resultados.
-Expone servicio /compute_ik para que la GUI calcule poses objetivo.
-
-Topics suscritos:
-  /joint_states           (sensor_msgs/JointState)
-
-Topics publicados:
-  /end_effector_pose      (geometry_msgs/PoseStamped)  — pose del efector
-  /fk_points              (sensor_msgs/JointState)     — puntos 3D del brazo
-                           (nombre[i] = "p{i}", position = x,y,z intercalados)
-
-Servicios:
-  /compute_ik             (rescue_interfaces/ComputeIK)
+Receives all six driver joints, publishes active TCP/tool/camera poses and serves
+full-pose IK. There is no legacy point renderer or reduced beta/q5/q6 service.
 """
 
 import numpy as np
+import time
+import threading
 
 import rclpy
 from rclpy.node import Node
+from rclpy.callback_groups import MutuallyExclusiveCallbackGroup
 from sensor_msgs.msg import JointState
 from geometry_msgs.msg import PoseStamped, Quaternion
 
-from rescue_command_station.arm.kinematics import Arm6DOF, ArmParams, make_T, rotx, rotz, roty, rot_to_rpy
-from rescue_interfaces.srv import ComputeIK, ComputeIKPose
+from .kinematics import make_T, rot_to_rpy
+from rescue_interfaces.srv import ComputeIKPose
+from .configuration import configured_arm, settings
 
 
 def rpy_to_quaternion(roll, pitch, yaw) -> Quaternion:
@@ -47,55 +37,23 @@ class CinematicaNode(Node):
     def __init__(self):
         super().__init__('cinematica')
 
-        # Parametros geometricos desde YAML
-        self.declare_parameter('base_height',  0.14)
-        self.declare_parameter('L1',           0.22)
-        self.declare_parameter('L2',           0.20)
-        self.declare_parameter('L3',           0.12)
-        self.declare_parameter('tool_length',  0.10)
-        self.declare_parameter('joint_order',
-            ['Base', 'Hombro', 'Codo', 'Munieca_P', 'Munieca_Y', 'Munieca_R'])
-        # Joints cuyo giro fisico va al reves del modelo. Se declara como STRING
-        # separado por comas (no lista), porque una lista VACIA en ROS2 deja el
-        # parametro sin inicializar (no puede inferir el tipo) y el nodo crashea.
-        # Vacio ("") = ningun joint invertido.
-        self.declare_parameter('sim_invert_joints', 'Munieca_P')
-
-        p = ArmParams(
-            base_height = self.get_parameter('base_height').value,
-            L1          = self.get_parameter('L1').value,
-            L2          = self.get_parameter('L2').value,
-            L3          = self.get_parameter('L3').value,
-            tool_length = self.get_parameter('tool_length').value,
-        )
-        self._arm         = Arm6DOF(p)
-        self._joint_order = self.get_parameter('joint_order').value
-        self._q_actual    = np.zeros(len(self._joint_order))
-        self._joint_map   = {name: i for i, name in enumerate(self._joint_order)}
-
-        # Signo de visualizacion por joint: -1 invierte el sentido en la FK
-        # (solo afecta el dibujo/pose, no los comandos al servo).
-        raw_inv = self.get_parameter('sim_invert_joints').value
-        invertidos = [s.strip() for s in str(raw_inv).split(',') if s.strip()]
-        self._fk_sign = np.array(
-            [-1.0 if name in invertidos else 1.0 for name in self._joint_order])
+        self._arm, self._fk_sign = configured_arm(self)
+        self._joint_order = list(settings(self)['joint_order'])
+        self._lock = threading.RLock()
+        self._io_group = MutuallyExclusiveCallbackGroup()
+        self._q_actual = np.zeros(6)
+        self._seen = np.zeros(6)
+        self._joint_map = {name:i for i,name in enumerate(self._joint_order)}
 
         # Publishers
         self._pub_pose    = self.create_publisher(
             PoseStamped, '/end_effector_pose', 10)
-        self._pub_points  = self.create_publisher(
-            JointState,  '/fk_points', 10)
-        self._pub_preview = self.create_publisher(
-            JointState,  '/sim/fk_points_preview', 10)
-
+        self._frame_publishers = {frame:self.create_publisher(PoseStamped, '/'+frame+'_pose', 10)
+                                  for frame in ('tool','camera')}
         # Subscribers
         self.create_subscription(
-            JointState, '/joint_states',         self._cb_joint_states,   10)
-        self.create_subscription(
-            JointState, '/joint_states_preview',  self._cb_joint_preview,  10)
-
+            JointState, '/joint_states', self._cb_joint_states, 10, callback_group=self._io_group)
         # Servicios IK
-        self.create_service(ComputeIK,     '/compute_ik',      self._srv_ik)
         self.create_service(ComputeIKPose, '/compute_ik_pose', self._srv_ik_pose)
 
         self.get_logger().info('Nodo cinematica listo.')
@@ -103,44 +61,37 @@ class CinematicaNode(Node):
     # ------------------------------------------------------------------
 
     def _cb_joint_states(self, msg: JointState):
-        """Recibe posiciones de ambos drivers y recalcula FK."""
-        for name, pos in zip(msg.name, msg.position):
-            if name in self._joint_map:
-                self._q_actual[self._joint_map[name]] = pos
+        """Only a recent, complete measured state may produce a measured pose."""
+        with self._lock:
+            for name, pos in zip(msg.name, msg.position):
+                if name in self._joint_map and np.isfinite(pos):
+                    i = self._joint_map[name]
+                    self._q_actual[i] = pos
+                    self._seen[i] = time.monotonic()
+            fresh = np.all(time.monotonic() - self._seen < 1.0)
+        if fresh:
+            self._publicar_fk()
 
-        self._publicar_fk()
+    def _current(self):
+        with self._lock:
+            if not np.all(time.monotonic() - self._seen < 1.0):
+                raise ValueError('Sin feedback completo reciente para sembrar IK')
+            return self._q_actual.copy() * self._fk_sign
 
-    def _cb_joint_preview(self, msg: JointState):
-        """Recibe q_rad de preview IK y publica /sim/fk_points_preview."""
-        q_preview = self._q_actual.copy()
-        for name, pos in zip(msg.name, msg.position):
-            if name in self._joint_map:
-                q_preview[self._joint_map[name]] = pos
-        try:
-            result = self._arm.fk(q_preview * self._fk_sign)
-        except Exception:
-            return
-        pts = result['points']
-        pts_msg = JointState()
-        pts_msg.header.stamp = self.get_clock().now().to_msg()
-        for i, pt in enumerate(pts):
-            pts_msg.name.append(f'p{i}')
-            pts_msg.position.extend([float(pt[0]), float(pt[1]), float(pt[2])])
-        self._pub_preview.publish(pts_msg)
+
 
     def _publicar_fk(self):
         try:
-            result = self._arm.fk(self._q_actual * self._fk_sign)
+            result = self._arm.fk(self._current())
         except Exception as e:
             self.get_logger().warn(f'FK error: {e}')
             return
 
         now = self.get_clock().now().to_msg()
-        pts = result['points']  # (6,3)
         T06 = result['T06']
 
         # ── PoseStamped del efector ──────────────────────────────────
-        pos = pts[-1]
+        pos = T06[:3,3]
         R   = T06[:3, :3]
         roll_deg, pitch_deg, yaw_deg = rot_to_rpy(R)
         roll  = np.radians(roll_deg)
@@ -155,51 +106,15 @@ class CinematicaNode(Node):
         pose_msg.pose.position.z = float(pos[2])
         pose_msg.pose.orientation = rpy_to_quaternion(roll, pitch, yaw)
         self._pub_pose.publish(pose_msg)
-
-        # ── Puntos del brazo (para visualizacion) ────────────────────
-        # Formato: name=["p0".."p5"], position=[x0,y0,z0, x1,y1,z1, ...]
-        pts_msg = JointState()
-        pts_msg.header.stamp = now
-        for i, pt in enumerate(pts):
-            pts_msg.name.append(f'p{i}')
-            pts_msg.position.extend([float(pt[0]), float(pt[1]), float(pt[2])])
-        self._pub_points.publish(pts_msg)
-
-    # ------------------------------------------------------------------
-    #  Servicio IK (implementar cuando este el srv custom)
-    # ------------------------------------------------------------------
-
-    def _srv_ik(self, req, res):
-        try:
-            q1t = np.arctan2(req.y, req.x)
-            Rd  = (rotz(q1t)
-                   @ roty(np.radians(req.beta_deg))
-                   @ rotx(np.radians(req.q5_deg))   # Muñeca_Y (eje X)
-                   @ rotz(np.radians(req.q6_deg)))[:3, :3]  # Muñeca_R (eje Z)
-            Td  = make_T(Rd, [req.x, req.y, req.z])
-            # Semilla = configuracion actual (en convencion cinematica) para
-            # continuidad/suavidad y evitar volteos de munieca.
-            q   = self._arm.ik(Td, req.elbow,
-                               q_init=self._q_actual * self._fk_sign)
-            res.success = True
-            # Convertir de convencion cinematica a convencion de servo
-            # (fk_sign invierte los joints marcados en sim_invert_joints).
-            res.q_rad   = (q * self._fk_sign).tolist()
-            res.mensaje = 'OK'
-        except Exception as e:
-            res.success = False
-            res.q_rad   = []
-            res.mensaje = str(e)
-        return res
+        for frame,publisher in self._frame_publishers.items():
+            T=result[frame]; message=PoseStamped()
+            message.header=pose_msg.header
+            message.pose.position.x,message.pose.position.y,message.pose.position.z=map(float,T[:3,3])
+            message.pose.orientation=rpy_to_quaternion(*np.radians(rot_to_rpy(T[:3,:3])))
+            publisher.publish(message)
 
     def _srv_ik_pose(self, req, res):
-        """IK desde una pose completa Td = [R|p] (para teleoperacion cartesiana).
-
-        Usa el mismo solver geometrico self._arm.ik sin cambios. Solo arma Td
-        con la R recibida y verifica que la POSICION sea alcanzable (la
-        orientacion es best-effort: la munieca de 2 ejes puede no cubrir toda
-        SO(3) en cualquier punto).
-        """
+        """Exact active TCP pose IK; rejects position AND orientation errors."""
         try:
             R = np.array(req.r, dtype=float).reshape(3, 3)
             Td = make_T(R, [req.x, req.y, req.z])
@@ -207,18 +122,18 @@ class CinematicaNode(Node):
             # trayectoria cartesiana cada paso parte del anterior => movimiento
             # continuo y suave (incl. desplazamientos en Z) sin volteos.
             q  = self._arm.ik(Td, req.elbow or 'down',
-                              q_init=self._q_actual * self._fk_sign)
+                              q_init=self._current())
 
-            p_fk = self._arm.fk(q)['points'][-1]
+            p_fk = self._arm.fk(q)['T06'][:3,3]
             err  = float(np.linalg.norm(p_fk - np.array([req.x, req.y, req.z])))
             res.pos_err = err
-            if err > 0.02:          # > 2 cm: objetivo fuera de alcance
+            if err > 1e-6:          # numerical validation
                 res.success = False
                 res.q_rad   = []
                 res.mensaje = f'fuera de alcance (err {err*1000:.0f} mm)'
             else:
                 res.success = True
-                # Convertir a convencion de servo antes de devolver (ver _srv_ik).
+                # Convertir a convencion de driver antes de devolver el preview.
                 res.q_rad   = (q * self._fk_sign).tolist()
                 res.mensaje = 'OK'
         except Exception as e:
@@ -232,11 +147,15 @@ class CinematicaNode(Node):
 def main(args=None):
     rclpy.init(args=args)
     node = CinematicaNode()
+    from rclpy.executors import MultiThreadedExecutor
+    executor = MultiThreadedExecutor(num_threads=2)
+    executor.add_node(node)
     try:
-        rclpy.spin(node)
+        executor.spin()
     except KeyboardInterrupt:
         pass
     finally:
+        executor.shutdown()
         node.destroy_node()
         rclpy.shutdown()
 

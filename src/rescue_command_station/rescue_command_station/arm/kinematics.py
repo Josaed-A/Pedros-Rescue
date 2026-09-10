@@ -1,44 +1,10 @@
+"""Canonical 6R model. Metres/radians; zero pose vertical.
+Rz(q1) Tz(h) Ry(-q2) Tz(L1) Ry(-q3) Tz(L2) Ry(-q4) Tz(L3)
+Rz(q5) Tx(e56) Rx(q6). Both camera and tool are fixed to frame 6.
+No hardware calibration, servo ticks or ROS dependencies belong here.
 """
-kinematics.py
-=============
-Cinematica directa e inversa para brazo 6-DOF tipo UR5.
-Cadena de ejes: Z (base), Y (hombro), Y (codo), Y (munieca pitch),
-Z (munieca yaw), X (munieca roll) — la herramienta sale del ultimo eje.
-Biblioteca pura Python/NumPy — sin dependencias de ROS.
-
-Usada por cinematica_node.py (que la expone como topics/servicios ROS).
-
-CINEMATICA INVERSA — METODO NUMERICO POR JACOBIANO
---------------------------------------------------
-Implementacion basada en https://github.com/dimitris-anastasiou/cartesian-control-IK
-(control cartesiano + IK por Jacobiano, estilo Columbia Robotics).
-
-Se abandono la IK geometrica analitica (descomposicion Euler Y-Z-X). En este
-brazo las articulaciones de pitch (q2,q3,q4 sobre Y) acoplan POSICION y
-ORIENTACION (igual que un UR5): el cabeceo phi del antebrazo que coloca L3 no
-es libre para la orientacion. La descomposicion analitica forzaba ese
-acoplamiento y producia saltos discontinuos de la munieca (el efecto "munieca
-rara") y errores al mover en Z, porque cada pose se resolvia de forma
-independiente y la rama de munieca podia voltearse entre pasos.
-
-La IK numerica resuelve el error de pose 6D completo con minimos cuadrados
-amortiguados (damped least squares / Levenberg-Marquardt):
-
-    dq = Jᵀ (J Jᵀ + λ²I)⁻¹ · e_pose
-
-Sembrando el solver con la configuracion ACTUAL del brazo (q_init), la
-solucion se mantiene cerca de la anterior => movimiento continuo y suave en
-trayectorias cartesianas (incl. desplazamientos en Z) y sin volteos de
-munieca. Para llamadas aisladas se usan reinicios aleatorios.
-"""
-
-import numpy as np
 from dataclasses import dataclass
-
-
-# ─────────────────────────────────────────────────────────────
-#  Transformaciones homogeneas
-# ─────────────────────────────────────────────────────────────
+import numpy as np
 
 def rotz(t: float) -> np.ndarray:
     c, s = np.cos(t), np.sin(t)
@@ -121,185 +87,165 @@ def rot_to_rpy(R: np.ndarray) -> tuple[float, float, float]:
     return np.degrees(roll), np.degrees(pitch), np.degrees(yaw)
 
 
-# ─────────────────────────────────────────────────────────────
-#  Parametros geometricos del brazo
-# ─────────────────────────────────────────────────────────────
 
 @dataclass
 class ArmParams:
-    base_height : float = 0.10
-    L1          : float = 0.36
-    L2          : float = 0.36
-    L3          : float = 0.10
-    tool_length : float = 0.2
+    base_height: float
+    L1: float
+    L2: float
+    L3: float
+    tool_length: float
+    e56: float
+    camera_xyz: tuple
+    camera_rpy: tuple
+    control_frame: str
+
+    def __post_init__(self):
+        if len(self.camera_xyz)!=3 or len(self.camera_rpy)!=3:
+            raise ValueError('camera_xyz/camera_rpy requieren tres componentes')
+        values = [self.base_height, self.L1, self.L2, self.L3,
+                  self.tool_length, self.e56, *self.camera_xyz, *self.camera_rpy]
+        if not np.all(np.isfinite(values)) or min(self.L1, self.L2) <= 0 or self.L3 < 0:
+            raise ValueError("Geometria invalida: longitudes en metros, L1/L2 positivas")
+        if self.control_frame not in ("tool", "camera"):
+            raise ValueError("control_frame debe ser tool o camera")
 
 
-# ─────────────────────────────────────────────────────────────
-#  Cinematica 6-DOF tipo UR5
-# ─────────────────────────────────────────────────────────────
+def validate_pose(T):
+    T = np.asarray(T, float).reshape(4, 4)
+    R = T[:3, :3]
+    if (not np.all(np.isfinite(T)) or not np.allclose(T[3], [0,0,0,1])
+            or not np.allclose(R.T @ R, np.eye(3), atol=1e-7)
+            or abs(np.linalg.det(R)-1) > 1e-7):
+        raise ValueError("Pose invalida: se requiere una transformacion rigida finita")
+    return T
+
 
 class Arm6DOF:
-    def __init__(self, p: ArmParams):
+    def __init__(self, p: ArmParams, limits=None):
         self.p = p
+        self.limits = np.asarray(limits if limits is not None else
+                                 [(-np.pi, np.pi)]*6, float)
+        if self.limits.shape != (6,2) or not np.all(np.isfinite(self.limits)) or np.any(self.limits[:,0] >= self.limits[:,1]):
+            raise ValueError("Limites invalidos")
 
-    def max_reach(self) -> float:
-        return self.p.L1 + self.p.L2 + self.p.L3 + self.p.tool_length
+    def max_reach(self):
+        p = self.p
+        return p.base_height+p.L1+p.L2+p.L3+abs(p.e56)+max(abs(p.tool_length), np.linalg.norm(p.camera_xyz))
 
-    def fk(self, q: np.ndarray) -> dict:
+    def mount(self, frame=None):
+        if (frame or self.p.control_frame) == "tool":
+            return transl(self.p.tool_length,0,0)
+        r,p,y = self.p.camera_rpy
+        return transl(*self.p.camera_xyz) @ rotz(y) @ roty(p) @ rotx(r)
+
+    def fk(self, q):
+        q = np.asarray(q, float).reshape(6)
+        if not np.all(np.isfinite(q)):
+            raise ValueError("Angulos no finitos")
+        p = self.p
+        T = rotz(q[0]) @ transl(z=p.base_height)
+        points = [np.zeros(3), T[:3,3].copy()]
+        origins = [np.zeros(3)]; axes = [np.array([0.,0.,1.])]; chain = [T.copy()]
+        for i,L in enumerate((p.L1,p.L2,p.L3)):
+            origins.append(T[:3,3].copy()); axes.append(T[:3,:3] @ [0,-1,0])
+            T = T @ roty(-q[i+1]) @ transl(z=L)
+            points.append(T[:3,3].copy()); chain.append(T.copy())
+        origins.append(T[:3,3].copy()); axes.append(T[:3,:3] @ [0,0,1])
+        T = T @ rotz(q[4]) @ transl(x=p.e56); chain.append(T.copy())
+        origins.append(T[:3,3].copy()); axes.append(T[:3,:3] @ [1,0,0])
+        T = T @ rotx(q[5]); chain.append(T.copy())
+        tool = T @ self.mount("tool"); camera = T @ self.mount("camera")
+        active = camera if p.control_frame == "camera" else tool
+        points.append(tool[:3,3].copy())
+        return dict(T06=active, flange=T, tool=tool, camera=camera,
+                    points=np.array(points), origins=np.array(origins), axes=np.array(axes), chain=chain)
+
+    def fk_chain(self, q):
+        return self.fk(q)["chain"]
+
+    def jacobian(self, q):
+        f = self.fk(q)
+        return np.vstack((np.cross(f["axes"], f["T06"][:3,3]-f["origins"]).T, f["axes"].T))
+
+    def pose_error(self, q, Rd, pd):
+        T = self.fk(q)["T06"]
+        return np.r_[np.asarray(pd)-T[:3,3], rot_log(np.asarray(Rd) @ T[:3,:3].T)]
+
+    def ik(self, Td, elbow="down", q_init=None):
+        Td = validate_pose(Td)
+        seed = np.zeros(6) if q_init is None else np.asarray(q_init,float).reshape(6)
+        if not np.all(np.isfinite(seed)):
+            raise ValueError("Semilla invalida")
+        err = self.pose_error(seed, Td[:3,:3], Td[:3,3])
+        if np.linalg.norm(err) < 1e-9 and np.all(seed >= self.limits[:,0]) and np.all(seed <= self.limits[:,1]):
+            return seed.copy()
+        m = self.mount(); R6 = Td[:3,:3] @ m[:3,:3].T
+        w = Td[:3,3] - R6 @ (m[:3,3]+[self.p.e56,0,0])
+        rho = np.hypot(*w[:2]); p=self.p
+        b = np.arctan2(w[1],w[0]); vertical = np.arctan2(R6[1,0],R6[0,0])
+        bases = [b,b+np.pi] if rho>1e-9 else [seed[0],b,vertical,vertical+np.pi,*np.linspace(-np.pi,np.pi,181)]
+        solutions=[]
+        for q1 in bases:
+            B = rotz(-q1)[:3,:3] @ R6
+            c5=np.hypot(B[0,0],B[2,0]); r=np.cos(q1)*w[0]+np.sin(q1)*w[1]; z=w[2]-p.base_height
+            if c5>1e-9:
+                phi=np.arctan2(B[2,0],B[0,0])+np.pi/2
+                q5=np.arctan2(B[1,0],c5); q6=np.arctan2(-B[1,2],B[1,1])
+                orientations=[(phi,q5,q6),(phi+np.pi,np.pi-q5,q6+np.pi)]
+            else:
+                q5=np.sign(B[1,0])*np.pi/2
+                theta=np.arctan2(z,r); dist=np.hypot(r,z); boundary=[]
+                if dist*p.L3>1e-12:
+                    for radius in (p.L1+p.L2,abs(p.L1-p.L2)):
+                        c=(dist*dist+p.L3*p.L3-radius*radius)/(2*dist*p.L3)
+                        if abs(c)<=1+1e-9:
+                            a=np.arccos(np.clip(c,-1,1)); boundary.extend([theta-a,theta+a])
+                orientations=[]
+                for phi in [np.pi/2+sum(seed[1:4]),theta,*boundary,*np.linspace(-np.pi,np.pi,181)]:
+                    C=(roty(-(phi-np.pi/2)) @ rotz(q5))[:3,:3].T @ B
+                    orientations.append((phi,q5,np.arctan2(C[2,1],C[1,1])))
+            for phi,q5,q6 in orientations:
+                u=r-p.L3*np.cos(phi); v=z-p.L3*np.sin(phi)
+                D=(u*u+v*v-p.L1*p.L1-p.L2*p.L2)/(2*p.L1*p.L2)
+                if abs(D)>1+1e-9: continue
+                for sign in ((-1,1) if elbow=="up" else (1,-1)):
+                    q3=sign*np.arccos(np.clip(D,-1,1))
+                    theta=np.arctan2(v,u)-np.arctan2(p.L2*np.sin(q3),p.L1+p.L2*np.cos(q3))
+                    q=np.array([q1,theta-np.pi/2,q3,phi-theta-q3,q5,q6])
+                    lo=np.ceil((self.limits[:,0]-q-1e-10)/(2*np.pi)); hi=np.floor((self.limits[:,1]-q+1e-10)/(2*np.pi))
+                    if np.any(lo>hi): continue
+                    q += 2*np.pi*np.clip(np.round((seed-q)/(2*np.pi)),lo,hi)
+                    e=self.pose_error(q,Td[:3,:3],Td[:3,3])
+                    if np.linalg.norm(e[:3])<1e-6 and np.linalg.norm(e[3:])<1e-6:
+                        solutions.append(q)
+            # Keep preceding base angle when it belongs to the singular family.
+            if rho<1e-9 and solutions: break
+        if not solutions:
+            raise ValueError("Sin solucion exacta dentro de limites (familias singulares muestreadas)")
+        return min(solutions,key=lambda q: np.linalg.norm(q-seed)).copy()
+
+    def relative_target(self, q, delta, frame="tool"):
+        if frame not in ("base","tool","camera"):
+            raise ValueError("Marco desconocido")
+        delta=np.asarray(delta,float).reshape(3)
+        f=self.fk(q); T=f["T06"].copy()
+        R=np.eye(3) if frame=="base" else f[frame][:3,:3]
+        T[:3,3] += R @ delta
+        return validate_pose(T)
+
+    def relative_basis(self, active_R, frame):
+        """Axes for a displacement, independent from the point being controlled."""
+        if frame=='base': return np.eye(3)
+        if frame not in ('tool','camera'): raise ValueError('Marco desconocido')
+        return np.asarray(active_R) @ self.mount()[:3,:3].T @ self.mount(frame)[:3,:3]
+
+    def component_target(self, xyz, beta, q5, q6):
+        """Legacy service adapter. beta=q2+q3+q4; all angles radians.
+
+        q1 inferred from target azimuth is only a target-orientation convention;
+        for arbitrary fixed orientations use the full-pose interface instead.
         """
-        Cinematica directa.  q: array [q1..q6] en radianes.
-        Retorna 'T06' (4x4 del efector) y 'points' (6,3 posicion de cada eje;
-        q5 y q6 comparten el centro de munieca).
-        """
-        q1, q2, q3, q4, q5, q6 = q
-        A01 = rotz(q1) @ transl(0, 0, self.p.base_height)
-        A02 = A01 @ roty(q2 - np.pi/2) @ transl(self.p.L1, 0, 0)
-        A03 = A02 @ roty(q3) @ transl(self.p.L2, 0, 0)
-        A04 = A03 @ roty(q4) @ transl(self.p.L3, 0, 0)
-        A05 = A04 @ rotx(q5)                                    # Muñeca_Y (eje X)
-        # Muñeca_R (eje Z) — la pinza sale COAXIAL al eje de roll (rota sobre el,
-        # apuntando +X horizontal en calibracion): offset a lo largo de -Z local.
-        A06 = A05 @ rotz(q6) @ transl(0, 0, -self.p.tool_length)
-        pts = np.array([np.zeros(3), A01[:3,3], A02[:3,3],
-                        A03[:3,3], A04[:3,3], A06[:3,3]])
-        return {"T06": A06, "points": pts}
-
-    # ─────────────────────────────────────────────────────────────
-    #  Cadena de transformadas y Jacobiano geometrico
-    # ─────────────────────────────────────────────────────────────
-
-    def fk_chain(self, q: np.ndarray) -> list[np.ndarray]:
-        """
-        Devuelve las transformadas acumuladas [A01, A02, A03, A04, A05, A06].
-        A06 es la pose del efector (= fk()['T06']).
-        """
-        q1, q2, q3, q4, q5, q6 = q
-        A01 = rotz(q1) @ transl(0, 0, self.p.base_height)
-        A02 = A01 @ roty(q2 - np.pi/2) @ transl(self.p.L1, 0, 0)
-        A03 = A02 @ roty(q3) @ transl(self.p.L2, 0, 0)
-        A04 = A03 @ roty(q4) @ transl(self.p.L3, 0, 0)
-        A05 = A04 @ rotx(q5)                                    # Muñeca_Y (eje X)
-        # Muñeca_R (eje Z) — pinza coaxial al eje de roll (offset -Z local).
-        A06 = A05 @ rotz(q6) @ transl(0, 0, -self.p.tool_length)
-        return [A01, A02, A03, A04, A05, A06]
-
-    def jacobian(self, q: np.ndarray) -> np.ndarray:
-        """
-        Jacobiano geometrico 6x6 del efector, expresado en el frame base.
-        Filas 0-2: velocidad lineal; filas 3-5: velocidad angular.
-
-        Para cada articulacion revoluta i con eje 'axis_i' (en base) que pasa
-        por el punto 'o_i':
-            J_v[:,i] = axis_i × (o_ee − o_i)
-            J_w[:,i] = axis_i
-        El frame en el que actua cada giro y su eje local:
-            q1: base   eje Z | q2: A01 eje Y | q3: A02 eje Y
-            q4: A03    eje Y | q5: A04 eje X | q6: A05 eje Z
-        """
-        A01, A02, A03, A04, A05, A06 = self.fk_chain(q)
-        frames     = [np.eye(4), A01, A02, A03, A04, A05]
-        axes_local = [[0, 0, 1], [0, 1, 0], [0, 1, 0],
-                      [0, 1, 0], [1, 0, 0], [0, 0, 1]]
-        o_ee = A06[:3, 3]
-        J = np.zeros((6, 6))
-        for i in range(6):
-            Ri   = frames[i][:3, :3]
-            o_i  = frames[i][:3, 3]
-            axis = Ri @ np.asarray(axes_local[i], float)
-            J[0:3, i] = np.cross(axis, o_ee - o_i)
-            J[3:6, i] = axis
-        return J
-
-    # ─────────────────────────────────────────────────────────────
-    #  Cinematica inversa numerica (damped least squares)
-    # ─────────────────────────────────────────────────────────────
-
-    def pose_error(self, q: np.ndarray, Rd: np.ndarray,
-                   pd: np.ndarray) -> np.ndarray:
-        """Error de pose 6D [e_pos(3); e_rot(3)] en frame base."""
-        T = self.fk_chain(q)[-1]
-        e_p = pd - T[:3, 3]
-        e_o = rot_log(Rd @ T[:3, :3].T)
-        return np.concatenate([e_p, e_o])
-
-    def _refine(self, q0: np.ndarray, Rd: np.ndarray, pd: np.ndarray,
-                max_iters: int, tol: float, lam: float
-                ) -> tuple[np.ndarray, float]:
-        """Itera damped-least-squares desde q0. Devuelve (q, err_final)."""
-        I6 = np.eye(6)
-        q  = np.asarray(q0, float).copy()
-        for _ in range(max_iters):
-            e   = self.pose_error(q, Rd, pd)
-            if np.linalg.norm(e) < tol:
-                break
-            J  = self.jacobian(q)
-            dq = J.T @ np.linalg.solve(J @ J.T + (lam ** 2) * I6, e)
-            step = np.linalg.norm(dq)
-            if step > 0.5:                 # limitar el paso (evita saltos)
-                dq *= 0.5 / step
-            q = q + dq
-        q = np.array([_wrap(v) for v in q])
-        return q, float(np.linalg.norm(self.pose_error(q, Rd, pd)))
-
-    def ik(self, Td: np.ndarray, elbow: str = "down",
-           q_init: np.ndarray | None = None,
-           max_iters: int = 200, tol: float = 1e-5,
-           lam: float = 0.05, accept: float = 5e-4) -> np.ndarray:
-        """
-        Cinematica inversa numerica por Jacobiano (Levenberg-Marquardt).
-
-        Td        : 4x4 del efector deseado.
-        elbow     : "down"/"up" — solo sesga la semilla por defecto.
-        q_init    : configuracion semilla (rad). Si se da, se intenta primero
-                    y se PRIORIZA la solucion cercana a ella => continuidad y
-                    suavidad en trayectorias cartesianas (sin volteos).
-        accept    : umbral de error (m/rad) bajo el cual una solucion se
-                    considera valida; entre las validas se elige la mas cercana
-                    a q_init.
-        Retorna q [q1..q6] en radianes.
-
-        Itera:  dq = Jᵀ (J Jᵀ + λ²I)⁻¹ · e_pose   hasta ‖e‖ < tol.
-        Si la semilla no alcanza el objetivo, reintenta con configuraciones
-        aleatorias (solo para llamadas en frio, no para seguimiento).
-        """
-        Rd, pd = Td[:3, :3], Td[:3, 3]
-        el = 0.6 if elbow != "up" else -0.6
-
-        candidatos: list[tuple[np.ndarray, float]] = []
-
-        # 1) Semilla de continuidad (config actual). Si converge, se devuelve
-        #    de inmediato: garantiza seguimiento suave sin saltos de munieca.
-        if q_init is not None:
-            q, err = self._refine(q_init, Rd, pd, max_iters, tol, lam)
-            candidatos.append((q, err))
-            if err < accept:
-                return q
-
-        # 2) Semilla sesgada por el codo (llamada en frio).
-        q, err = self._refine(np.array([0.0, 0.3, el, 0.3, 0.0, 0.0]),
-                              Rd, pd, max_iters, tol, lam)
-        candidatos.append((q, err))
-
-        # 3) Reinicios aleatorios solo si aun no hay solucion valida.
-        #    (El seguimiento cartesiano nunca llega aqui: la semilla de
-        #     continuidad ya devolvio antes. Solo afecta llamadas en frio.)
-        if min(e for _, e in candidatos) >= accept:
-            rng = np.random.default_rng(12345)
-            for _ in range(24):
-                q, err = self._refine(rng.uniform(-np.pi, np.pi, 6),
-                                      Rd, pd, max_iters, tol, lam)
-                candidatos.append((q, err))
-                if err < accept:
-                    break
-
-        err_min = min(e for _, e in candidatos)
-
-        # Si hay semilla, preferir continuidad: entre las soluciones dentro de
-        # una banda de 5 mm respecto a la mejor, elegir la mas cercana a q_init.
-        if q_init is not None:
-            qi = np.asarray(q_init, float)
-            banda = [(q, e) for q, e in candidatos if e <= err_min + 5e-3]
-            return min(banda, key=lambda c: np.linalg.norm(
-                _wrap_vec(c[0] - qi)))[0]
-
-        return min(candidatos, key=lambda c: c[1])[0]
+        q1=np.arctan2(xyz[1],xyz[0])
+        R=(rotz(q1)@roty(-beta)@rotz(q5)@rotx(q6))[:3,:3] @ self.mount()[:3,:3]
+        return make_T(R,xyz)

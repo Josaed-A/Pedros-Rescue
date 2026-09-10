@@ -1,0 +1,15 @@
+<!doctype html>
+<html lang="es"><head><meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'unsafe-inline'">
+<title>Canvas original 6R · estación</title>
+<style>
+/* Canvas background from the original simulator; Tk supplies the existing controls. */
+html,body{margin:0;width:100%;height:100%;overflow:hidden;background:#0e1725;color:#cad7e9;font:12px ui-monospace,monospace}
+#scene{width:100%;height:100%;display:block;touch-action:none;cursor:grab;outline:none}
+#feedback{position:absolute;left:14px;top:10px;padding:4px 6px;background:#0e1725;pointer-events:none}
+nav{display:none}
+</style></head><body>
+<canvas id="scene" tabindex="0" aria-label="Brazo 6R, poses calculadas por Python"></canvas>
+<div id="feedback">Esperando estados de las seis articulaciones</div>
+<nav><button data-view="iso">3D</button><button data-view="front">Frontal</button><button data-view="top">Superior</button></nav>
+<script src="canvas.js"></script></body></html>

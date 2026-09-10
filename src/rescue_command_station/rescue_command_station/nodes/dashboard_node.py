@@ -990,7 +990,8 @@ class ModernDashboardApp:
             return
         try:
             self._arm_proc = subprocess.Popen(
-                ['ros2', 'launch', 'rescue_command_station', 'arm_station.launch.py'],
+                ['ros2', 'launch', 'rescue_command_station', 'arm_station.launch.py',
+                 'managed_by_dashboard:=true'],
                 start_new_session=True)
             self.ros_node.get_logger().info('Precargando GUI del brazo (oculta)...')
         except Exception as e:

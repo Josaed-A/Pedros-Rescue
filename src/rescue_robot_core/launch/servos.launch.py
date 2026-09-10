@@ -20,16 +20,17 @@ import os
 
 JS_REMAP = [
     ('/joint_states',         '/arm/joint_states'),
-    ('/joint_states_preview', '/arm/joint_states_preview'),
 ]
 
 
 def generate_launch_description():
-    config = os.path.join(
+    config_default = os.path.join(
         get_package_share_directory('rescue_robot_core'), 'config', 'servos.yaml')
     log_level = LaunchConfiguration('log_level')
+    config = LaunchConfiguration('servos_config')
 
     return LaunchDescription([
+        DeclareLaunchArgument('servos_config', default_value=config_default),
         DeclareLaunchArgument('log_level', default_value='info'),
 
         Node(

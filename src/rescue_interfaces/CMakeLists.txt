@@ -11,7 +11,6 @@ rosidl_generate_interfaces(${PROJECT_NAME}
   "msg/CartesianState.msg"
   "srv/RegisterServo.srv"
   "srv/ServoCommand.srv"
-  "srv/ComputeIK.srv"
   "srv/ComputeIKPose.srv"
   "srv/ServoStatus.srv"
   "srv/CartesianGoto.srv"

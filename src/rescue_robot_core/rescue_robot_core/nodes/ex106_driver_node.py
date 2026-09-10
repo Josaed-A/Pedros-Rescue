@@ -108,6 +108,9 @@ class EX106DriverNode(Node):
             JointState, '/joint_states', 10)
         self._pub_status = self.create_publisher(
             ArmStatus, '/ex106/status', 10)
+        self._last_status_message = ''
+        self._status_heartbeat = self.create_timer(
+            0.5, lambda: self._publicar_status(self._last_status_message))
 
         self.create_subscription(
             JointState, '/ex106/joint_cmd', self._cb_joint_cmd, 10)
@@ -153,6 +156,7 @@ class EX106DriverNode(Node):
         self.create_service(Trigger,       '/ex106/reset_alerts',      self._srv_reset_alerts)
 
     def _publicar_status(self, mensaje: str = ''):
+        self._last_status_message = mensaje
         msg = ArmStatus()
         msg.header.stamp = self.get_clock().now().to_msg()
         msg.conectado    = self._conectado

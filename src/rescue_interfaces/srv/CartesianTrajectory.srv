@@ -5,7 +5,7 @@
 # El primer waypoint se usa como pose inicial de referencia;
 # si r esta vacio se usa la pose actual del TCP.
 rescue_interfaces/CartesianWaypoint[] waypoints
-string   elbow           # "up" o "down"
+string   elbow           # reservado por compatibilidad; rama continua desde la semilla medida
 float64  vel_pct         # velocidad articular porcentaje [1, 100]
 float64  path_tol_pos    # tolerancia de posicion en ruta (m)  — 0 = sin limite
 float64  path_tol_rot    # tolerancia de orientacion en ruta (rad) — 0 = sin limite

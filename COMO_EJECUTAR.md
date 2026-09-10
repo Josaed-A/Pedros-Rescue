@@ -2,6 +2,15 @@
 
 Stack nativo probado: Raspberry Pi `gardian` + PC de mando.
 
+## Integración del brazo 6R
+
+El brazo incorpora el motor Python entregado y la representación Canvas original.
+Antes de arrancar esta versión, seguir [ARM_6R.md](src/rescue_command_station/ARM_6R.md)
+para instalar Chromium, revisar las medidas locales conservadas y probar primero
+`ros2 launch rescue_command_station arm_station.launch.py sim:=true`.
+Esta integración aún no se ha validado en un grafo ROS ni en hardware; los
+resultados están en [VALIDACION.md](src/rescue_command_station/docs/integracion_6r/VALIDACION.md).
+
 ## Red
 
 ```text

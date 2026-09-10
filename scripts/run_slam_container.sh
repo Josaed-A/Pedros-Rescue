@@ -186,13 +186,9 @@ case "${1:-shell}" in
         CMD="source /opt/ros/jazzy/setup.bash && \
              cd /workspace && \
              echo '━━━ Instalando dependencias GUI brazo ━━━' && \
-             rm -rf /usr/lib/python3/dist-packages/mpl_toolkits 2>/dev/null || true && \
-             pip3 install customtkinter matplotlib --break-system-packages --no-cache-dir -q && \
-             echo '━━━ Compilando rescue_interfaces ━━━' && \
-             colcon build --packages-select rescue_interfaces 2>&1 | tail -3 && \
-             source /workspace/install/setup.bash && \
-             echo '━━━ Compilando rescue_command_station ━━━' && \
-             colcon build --packages-select rescue_command_station 2>&1 | tail -3 && \
+             python3 -m pip install -r requirements_pc.txt --break-system-packages && \
+             python3 -m playwright install --with-deps chromium && \
+             colcon build --packages-up-to rescue_command_station && \
              source /workspace/install/setup.bash && \
              echo '━━━ Lanzando GUI Brazo 6-DOF (sim:=${ARM_SIM}) ━━━' && \
              ros2 launch rescue_command_station arm_station.launch.py sim:=${ARM_SIM}"

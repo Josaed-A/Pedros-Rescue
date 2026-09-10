@@ -109,29 +109,13 @@ def generate_launch_description():
     )
 
     # ── 5. Servos del brazo 6-DOF (AX-12A + EX-106+) ─────────────
-    from ament_index_python.packages import get_package_share_directory as _gpsd
-    _servos_cfg = os.path.join(_gpsd('rescue_robot_core'), 'config', 'servos.yaml')
-    _js_remap = [
-        ('/joint_states',         '/arm/joint_states'),
-        ('/joint_states_preview', '/arm/joint_states_preview'),
-    ]
-    from launch_ros.actions import Node as _Node
     servos_launch = TimerAction(
         period=2.0,
-        actions=[
-            _Node(
-                package='rescue_robot_core', executable='dynamixel_bus_node',
-                name='ax12a_driver', parameters=[_servos_cfg],
-                remappings=_js_remap, output='screen',
-                condition=IfCondition(launch_servos),
-            ),
-            _Node(
-                package='rescue_robot_core', executable='ex106_driver_node',
-                name='ex106_driver', parameters=[_servos_cfg],
-                remappings=_js_remap, output='screen',
-                condition=IfCondition(launch_servos),
-            ),
-        ],
+        actions=[IncludeLaunchDescription(
+            PythonLaunchDescriptionSource(os.path.join(
+                get_package_share_directory('rescue_robot_core'), 'launch', 'servos.launch.py')),
+            condition=IfCondition(launch_servos),
+        )],
     )
 
     return LaunchDescription([
