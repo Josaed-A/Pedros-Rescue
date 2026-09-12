@@ -14,7 +14,7 @@ El stack corre repartido en **dos máquinas**:
 |---|---|---|---|
 | `rescue_interfaces` | — | ament_cmake | Mensajes y servicios custom (msg/srv). **Obligatorio aparte** (ROS 2 genera el código con rosidl, que un paquete Python no puede hacer). |
 | `rescue_robot_core` | Pi | ament_python | TODO el hardware: motores (BTS7960), bus de servos Dynamixel (brazo AX-12A + patas) + EX-106+, cámaras. |
-| `rescue_command_station` | PC | ament_python | Estación de mando: dashboard (conducción + **patas**), teleop PS4, y el **módulo `arm/`** (cinemática/cartesiano/GUI del brazo). |
+| `rescue_command_station` | PC | ament_python | Estación de mando: dashboard (conducción + **patas**), teleop Xbox Elite 2, y el **módulo `arm/`** (cinemática/cartesiano/GUI del brazo). |
 | `rescue_bringup` | ambas | ament_python | Launch files de orquestación + nodos pegamento (SLAM, detección, geotiff, acumulador de nube). |
 | `rescue_robot_description` | ambas | ament_python | URDF del robot (TF para RViz/SLAM). |
 | `dependencias/` | — | varios | Reimplementaciones mínimas propias de terceros: `cv_bridge`, `joy`. Agrupado para no mezclarlo con los paquetes `rescue_*`. |
@@ -41,10 +41,10 @@ src/
   rescue_command_station/         # PC — estación de mando
     rescue_command_station/
       control/   # cajas y mezcla tipo tanque
-      input/     # lectura del control PS4
+      input/     # mapeo del control Xbox Elite 2
       vision/    # QR y conversión de imagen para GUI
       arm/       # BRAZO: kinematics, cartesian_controller, *_node (cinematica/cartesian/gui/sim)
-      nodes/     # dashboard_node (conducción + patas), ps4_teleop_node, rgbd_viewer_node
+      nodes/     # dashboard_node (conducción + patas), xbox_teleop_node, rgbd_viewer_node
     config/arm.yaml + launch/  (command_station.launch.py, arm_station.launch.py)
 
   rescue_bringup/                 # launch + nodos pegamento
@@ -56,8 +56,8 @@ src/
 ## Flujo de control (conducción)
 
 ```text
-PS4 / joy_node
-    -> rescue_command_station / ps4_teleop_node   (joystick IZQUIERDO)
+Xbox Elite 2 / joy_node
+    -> rescue_command_station / xbox_teleop_node   (stick IZQUIERDO)
     -> /cmd_vel
     -> rescue_robot_core / motor_driver_node  -> perfil S -> BTS7960 -> motores
 ```
@@ -81,7 +81,7 @@ GUI del brazo (rescue_command_station/arm/gui_node)   [se abre desde el dashboar
 ## Flujo de las patas (locomoción)
 
 ```text
-PS4 / joy_node   (joystick DERECHO)
+Xbox Elite 2 / joy_node   (stick DERECHO)
     -> rescue_command_station / dashboard_node  (panel PATAS)
     -> /legs/cmd   (eje X = par delantero, eje Y = par trasero; signo = dirección)
     -> rescue_robot_core / dynamixel_bus_node   (modo rueda, velocidad fija)
@@ -106,10 +106,57 @@ La Astra del driver propio publica color/profundidad comprimidos y nube `PointCl
 en el frame `camera_optical_link` del URDF. El driver externo `astra_sdk` sigue
 disponible como opción y publica en `/camera/...`.
 
-## Manejo tipo tanque (joystick izquierdo)
+### Detección HAZMAT (y AprilTag / objetos de misión)
 
-- Adelante/atrás: ambas orugas avanzan/retroceden. Lado: giran opuestas. Diagonal: una más rápida.
-- `R1`/`L1`: subir/bajar caja. 5 cajas (20/40/60/80/100%). Sin acelerador R2 ni habilitación Share.
+El nodo `object_detector` (paquete `rescue_bringup`) procesa la **cámara frontal**
+(Logitech / GENERAL WEBCAM) con tres detectores en cascada:
+
+1. **AprilTag** `Standard41h12` (OpenCV `aruco`) → tipo `ar_code`.
+2. **Señales HAZMAT** con el modelo YOLO entrenado
+   [`src/rescue_bringup/models/best.pt`](src/rescue_bringup/models/best.pt) (49 clases) → tipo `hazmat_sign`.
+   Si el `.pt` no existe o `ultralytics` no está instalado, cae a un detector
+   HSV (diamante naranja) más tosco.
+3. **Objetos de misión** (mochila, botella, persona/víctima, etc.) vía YOLO
+   COCO (`yolov8n.pt`) → tipo `real_object`.
+
+```text
+GENERAL WEBCAM (/dev/video2) -> logitech_pub -> /robot/camera/front/image_raw/compressed
+                                                  -> object_detector
+                                                       -> /object_detections (JSON)
+                                                       -> /object_detection_markers (RViz)
+                                                       -> /camera/color/image_annotated/compressed -> dashboard
+```
+
+`object_detector` se lanza automáticamente junto con el **launch general de la
+Pi** (`pedro_pi.launch.py` → `pi_sensors.launch.py` → `logitech_vision.launch.py`),
+usando `best.pt` por defecto. El dashboard muestra el frame ya anotado (cajas +
+etiquetas) en el panel "Camara frontal"; el panel "Astra color" muestra el feed
+crudo salvo que algo publique en `astra_annotated_topic` (solo pasa en la
+prueba local de dos cámaras, ver abajo — en el robot real la Astra no corre
+detección). Ver [COMO_EJECUTAR.md](COMO_EJECUTAR.md#probar-la-deteccion-hazmat)
+para cómo probarlo en vivo, con o sin el resto del stack ROS.
+
+Todo lo relacionado con hazmat (modelos, entrenamiento, prueba standalone con
+OpenCV y las capturas automáticas de alertas) está organizado en
+[hazmat/](hazmat/README.md). `object_detector` confirma una señal solo cuando
+se sostiene varios frames seguidos (evita capturar ruido de un parpadeo del
+modelo) y guarda automáticamente `hazmat/alertas_detectadas/<camara>/*.jpg`
++ `.json` con clase, confianza y bbox — para que una persona revise la calidad
+de la detección. `test_local_cameras.launch.py` corre esto en **ambas**
+cámaras del PC a la vez (ver [COMO_EJECUTAR.md](COMO_EJECUTAR.md#alertas-hazmat-captura-automatica-para-revision-humana)).
+
+## Mando Xbox Elite Series 2
+
+- Stick izquierdo: conducir. Adelante/atrás mueve ambas orugas; a los lados gira; en diagonal mezcla ambas acciones.
+- `RB`/`LB`: subir/bajar marcha. Hay 5 limites: 20/40/60/80/100%.
+- Stick derecho: mover los pares de patas. `B` y `X` habilitan o aislan las patas asignadas.
+- D-pad: jog de Base y Codo. `LT`/`RT`: jog de Munieca_Y. `Y`/`A`: jog de Hombro.
+- `LB`+`RB`: alternar dashboard y GUI del brazo. `Menu`: reconectar los buses de servos.
+
+El driver selecciona automaticamente el dispositivo cuyo nombre contiene `Elite 2`,
+aplica una zona muerta de 12% para evitar deriva y permite forzar otro puerto con
+`joy_dev:=/dev/input/js0`. Las palancas traseras dependen del perfil interno del
+mando; el control base no depende de ellas.
 
 ## Ejecución
 
@@ -132,23 +179,24 @@ ros2 launch rescue_bringup pedro_pc.launch.py
 
 `pedro_pi.launch.py` levanta red DDS, TF, LD19, camaras detectadas, motores BTS7960 y servos Dynamixel. Las camaras usan autodeteccion por defecto: si no hay Orbbec/Logitech conectadas, se saltan para no llenar el log de errores de `/dev/video*`.
 
-`pedro_pc.launch.py` levanta red DDS, `slam_toolbox`, RViz, dashboard, `joy_node` y teleop PS4. Los argumentos principales son:
+`pedro_pc.launch.py` levanta red DDS, `slam_toolbox`, RViz, dashboard, `joy_node` y teleop Xbox. Los argumentos principales son:
 
 ```bash
 ros2 launch rescue_bringup pedro_pc.launch.py launch_rviz:=false
 ros2 launch rescue_bringup pedro_pc.launch.py launch_dashboard:=false
 ros2 launch rescue_bringup pedro_pc.launch.py network:=cable
 ros2 launch rescue_bringup pedro_pc.launch.py network:=wifi
+ros2 launch rescue_bringup pedro_pc.launch.py joy_dev:=/dev/input/js0
 ```
 
 Para hardware completo deben existir estos dispositivos:
 
-- PC: control PS4 como `/dev/input/js0`.
+- PC: Xbox Elite 2 visible como un dispositivo `/dev/input/js*`.
 - Pi: LD19 respondiendo en `/dev/ttyAMA0` a `230400`.
 - Pi: Orbbec Astra USB y Logitech USB si se quiere vision.
 - Pi: bus AX-12A como `/dev/ax12a` y EX-106+ como `/dev/ex106`.
 
-La prueba actual valida red PC-Pi, RViz, `slam_toolbox`, dashboard, motores y nodos de servos. Quedan por corregir fisicamente: el LD19 abre `/dev/ttyAMA0` pero responde `LDLidar communication KO`, no hay PS4 en `/dev/input/js0`, no hay Orbbec/Logitech USB detectadas y falta el enlace `/dev/ax12a`.
+El PC detecta el mando como `Microsoft X-Box One Elite 2 pad` mediante el driver `xpad`. La prueba actual valida red PC-Pi, RViz, `slam_toolbox`, dashboard, motores y nodos de servos. Quedan por corregir fisicamente: el LD19 abre `/dev/ttyAMA0` pero responde `LDLidar communication KO`, no hay Orbbec/Logitech USB detectadas y falta el enlace `/dev/ax12a`.
 
 ## Requisitos
 

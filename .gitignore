@@ -15,13 +15,18 @@ __pycache__/
 datasets/
 
 # Checkpoints y resultados de entrenamiento
-training/runs/
+hazmat/training/runs/
+
+# Capturas automaticas de detecciones hazmat (evidencia para revision humana,
+# no va en git — se regenera en cada prueba)
+hazmat/alertas_detectadas/*
+!hazmat/alertas_detectadas/.gitkeep
 
 # Modelos base descargados automáticamente por ultralytics
 yolov8n.pt
 yolov8s.pt
 yolov8m.pt
 
-# El modelo entrenado final SÍ va en git (src/rescue_bringup/models/hazmat_yolo.pt)
+# El modelo entrenado final SÍ va en git (src/rescue_bringup/models/best.pt)
 # para no ignorarlo accidentalmente:
 !src/rescue_bringup/models/

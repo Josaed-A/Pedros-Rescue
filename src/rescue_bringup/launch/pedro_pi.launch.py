@@ -194,6 +194,7 @@ def _launch_sensors(context):
                 'astra_fps': LaunchConfiguration('astra_fps'),
                 'jpeg_quality': LaunchConfiguration('jpeg_quality'),
                 'logitech_device': logitech_device,
+                'launch_servos': LaunchConfiguration('launch_servos'),
                 'hazmat_model': LaunchConfiguration('hazmat_model'),
                 'output_dir': LaunchConfiguration('output_dir'),
             }.items(),
@@ -202,10 +203,10 @@ def _launch_sensors(context):
 
 
 def generate_launch_description():
-    pkg_core = get_package_share_directory('rescue_robot_core')
+    pkg_bringup = get_package_share_directory('rescue_bringup')
+    _default_hazmat_model = os.path.join(pkg_bringup, 'models', 'best.pt')
 
     launch_motors = LaunchConfiguration('launch_motors')
-    launch_servos = LaunchConfiguration('launch_servos')
     max_pwm = LaunchConfiguration('max_pwm')
     pwm_frequency_hz = LaunchConfiguration('pwm_frequency_hz')
     cmd_timeout_seconds = LaunchConfiguration('cmd_timeout_seconds')
@@ -223,12 +224,11 @@ def generate_launch_description():
         }],
     )
 
-    servos_launch = IncludeLaunchDescription(
-        PythonLaunchDescriptionSource(
-            os.path.join(pkg_core, 'launch', 'servos.launch.py')
-        ),
-        condition=IfCondition(launch_servos),
-    )
+    # NOTA: los drivers de servos (ax12a/ex106) NO se lanzan aca — ya los
+    # incluye pi_sensors.launch.py (item 6), condicionados por 'launch_servos'
+    # (pasado en _launch_sensors). Lanzarlos tambien aca duplicaba los nodos
+    # ax12a_driver/ex106_driver, dos instancias peleandose el mismo puerto
+    # serie (causaba fallas intermitentes de comunicacion, incl. en el lidar).
 
     return LaunchDescription([
         DeclareLaunchArgument('network', default_value='auto',
@@ -253,7 +253,8 @@ def generate_launch_description():
         DeclareLaunchArgument('astra_fps', default_value='30'),
         DeclareLaunchArgument('jpeg_quality', default_value='80'),
         DeclareLaunchArgument('logitech_device', default_value='auto'),
-        DeclareLaunchArgument('hazmat_model', default_value=''),
+        DeclareLaunchArgument('hazmat_model', default_value=_default_hazmat_model,
+                              description='Ruta al modelo YOLO hazmat (.pt). Vacio = HSV fallback'),
         DeclareLaunchArgument('output_dir', default_value='/home/gardian/maps'),
         DeclareLaunchArgument('max_pwm', default_value='0.85'),
         DeclareLaunchArgument('pwm_frequency_hz', default_value='1000'),
@@ -261,5 +262,4 @@ def generate_launch_description():
         OpaqueFunction(function=_configure_network),
         OpaqueFunction(function=_launch_sensors),
         motors_node,
-        servos_launch,
     ])

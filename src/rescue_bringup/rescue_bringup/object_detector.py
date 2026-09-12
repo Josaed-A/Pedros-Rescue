@@ -19,6 +19,9 @@ Salidas:
   /object_detections             (std_msgs/String — JSON por detección, para geotiff_writer)
   /object_detection_markers      (visualization_msgs/MarkerArray — visualización RViz)
   /save_detection_csv            (std_srvs/srv/Trigger)
+  alerts_dir/<camera_id>/*.jpg+.json  (captura + descripción cuando una señal hazmat
+                                        se confirma durante `alert_confirm_frames`
+                                        frames seguidos — ver hazmat/alertas_detectadas/)
 
 CSV formato RoboCup 2026:
   detection,time,type,name,x,y,z,robot,mode
@@ -30,6 +33,7 @@ import datetime
 import json
 import math
 import os
+import time
 from typing import Dict, List, Optional, Tuple
 
 import numpy as np
@@ -59,6 +63,8 @@ try:
     _YOLO_OK = True
 except ImportError:
     _YOLO_OK = False
+
+from rescue_bringup.hazmat_common import run_hazmat_yolo
 
 
 # ── Objetos YOLO que consideramos "objetos de misión" ─────────────────────────
@@ -114,6 +120,14 @@ class ObjectDetector(Node):
         self.declare_parameter('enable_yolo',    True)
         self.declare_parameter('enable_apriltag', True)
         self.declare_parameter('enable_hazmat',  True)
+        # hazmat_mode='local' (default): esta instancia carga su propio modelo
+        # hazmat y lo corre ella misma — comportamiento de siempre, sin cambios.
+        # hazmat_mode='worker': no carga ningun modelo; reenvia sus frames a un
+        # hazmat_worker compartido (un solo modelo cargado, sirve a N camaras)
+        # y mezcla los resultados que le llegan de vuelta en el mismo pipeline
+        # (dibujo, alertas, CSV, RViz siguen identicos). Requiere `camera_id`.
+        self.declare_parameter('hazmat_mode',        'local')
+        self.declare_parameter('worker_result_ttl',  2.0)
 
         # ── Configuración de topics (compatible con ambos drivers) ──
         # use_compressed=false → driver oficial astra_camera / orbbec_camera (raw Image)
@@ -133,6 +147,18 @@ class ObjectDetector(Node):
         # depth_scale: factor mm→m para la profundidad del compañero (uint16 → metros)
         self.declare_parameter('depth_scale',  0.001)
 
+        # ── Capturas automaticas de alertas hazmat (evidencia para revision humana) ──
+        # camera_id distingue instancias cuando corren dos object_detector en paralelo
+        # (una por camara) — se usa como subcarpeta dentro de alerts_dir.
+        self.declare_parameter('camera_id',            '')
+        self.declare_parameter('alerts_dir',           '')
+        # Una deteccion hazmat solo se considera "confirmada" (y se captura) tras
+        # verse consistentemente durante N frames seguidos — evita guardar ruido
+        # de un solo frame cuando el modelo parpadea entre clases.
+        self.declare_parameter('alert_confirm_frames', 3)
+        self.declare_parameter('alert_cooldown_sec',   20.0)
+        self.declare_parameter('alert_pixel_tolerance', 80)
+
         if not _CV2_OK:
             self.get_logger().fatal('OpenCV (cv2) no encontrado — instala python3-opencv')
             raise RuntimeError('cv2 requerido')
@@ -149,6 +175,38 @@ class ObjectDetector(Node):
         # Detecciones acumuladas: lista de dicts
         self._detections: List[dict] = []
         self._det_counter = 0
+
+        # ── Modo de deteccion hazmat: local (propio modelo) o worker (compartido) ──
+        self._camera_id = self.get_parameter('camera_id').value
+        self._hazmat_mode = self.get_parameter('hazmat_mode').value
+        if self._hazmat_mode == 'worker' and not self._camera_id:
+            self.get_logger().warn(
+                "hazmat_mode='worker' requiere 'camera_id' — cayendo a modo 'local'")
+            self._hazmat_mode = 'local'
+        self._worker_result_ttl = float(self.get_parameter('worker_result_ttl').value)
+        self._worker_latest_result: List[dict] = []
+        self._worker_latest_result_time = 0.0
+        self._hazmat_submit_pub = None
+
+        # ── Tracking + captura automatica de alertas hazmat ─────────────
+        self._alert_confirm_frames = int(self.get_parameter('alert_confirm_frames').value)
+        self._alert_cooldown_sec   = float(self.get_parameter('alert_cooldown_sec').value)
+        self._alert_pixel_tol      = float(self.get_parameter('alert_pixel_tolerance').value)
+        self._hazmat_track: Dict[str, dict] = {}   # nombre clase -> {count, cx, cy, last_seen}
+        self._alert_last_saved: Dict[str, float] = {}  # nombre clase -> ultimo timestamp guardado
+
+        alerts_dir_param = self.get_parameter('alerts_dir').value
+        if alerts_dir_param:
+            self._alerts_dir = os.path.join(alerts_dir_param, self._camera_id) \
+                if self._camera_id else alerts_dir_param
+            try:
+                os.makedirs(self._alerts_dir, exist_ok=True)
+                self.get_logger().info(f'Alertas hazmat -> {self._alerts_dir}')
+            except OSError as exc:
+                self.get_logger().warn(f'No se pudo crear alerts_dir: {exc}')
+                self._alerts_dir = None
+        else:
+            self._alerts_dir = None
 
         # Hora de inicio de misión
         self._start_time: Optional[datetime.datetime] = None
@@ -189,10 +247,14 @@ class ObjectDetector(Node):
                 'ultralytics no instalado — detección YOLO desactivada. '
                 'Instala con: pip3 install ultralytics')
 
-        # Modelo hazmat entrenado (reemplaza detector HSV cuando está disponible)
+        # Modelo hazmat entrenado (reemplaza detector HSV cuando está disponible).
+        # En hazmat_mode='worker' NO se carga aqui — lo carga una sola vez el
+        # hazmat_worker compartido; esta instancia solo reenvia frames y recibe
+        # resultados (ver _maybe_submit_frame_to_worker / _on_hazmat_result).
         self._hazmat_yolo = None
         hazmat_model_path = self.get_parameter('hazmat_model').value
-        if _YOLO_OK and self.get_parameter('enable_hazmat').value and hazmat_model_path:
+        if self._hazmat_mode == 'local' and _YOLO_OK and self.get_parameter('enable_hazmat').value \
+                and hazmat_model_path:
             if os.path.exists(hazmat_model_path):
                 try:
                     self._hazmat_yolo = _YOLO(hazmat_model_path)
@@ -216,29 +278,59 @@ class ObjectDetector(Node):
         depth_topic      = self.get_parameter('depth_topic').value
         cam_info_topic   = self.get_parameter('camera_info_topic').value
 
+        # logitech_pub / astra_rgbd_camera_node publican con QoS BEST_EFFORT
+        # (sensor data) — un subscriber RELIABLE (el default de create_subscription)
+        # es incompatible con eso y no recibe ningun mensaje.
+        image_qos = QoSProfile(
+            history=QoSHistoryPolicy.KEEP_LAST,
+            depth=1,
+            reliability=QoSReliabilityPolicy.BEST_EFFORT,
+        )
+
         self.create_subscription(CameraInfo, cam_info_topic, self._on_cam_info, 5)
 
         if use_compressed:
             self.create_subscription(
-                CompressedImage, color_topic, self._on_color_compressed, 5)
+                CompressedImage, color_topic, self._on_color_compressed, image_qos)
             self.create_subscription(
-                CompressedImage, depth_topic, self._on_depth_compressed, 5)
+                CompressedImage, depth_topic, self._on_depth_compressed, image_qos)
             self.get_logger().info(
                 f'Modo COMPRESSED — color: {color_topic}  depth: {depth_topic}')
         else:
-            self.create_subscription(Image, color_topic, self._on_color, 5)
-            self.create_subscription(Image, depth_topic, self._on_depth, 5)
+            self.create_subscription(Image, color_topic, self._on_color, image_qos)
+            self.create_subscription(Image, depth_topic, self._on_depth, image_qos)
             self.get_logger().info(
                 f'Modo RAW — color: {color_topic}  depth: {depth_topic}')
 
         # Servicio de guardado
         self.create_service(Trigger, '/save_detection_csv', self._on_save_csv)
 
-        hazmat_mode = 'YOLO' if self._hazmat_yolo else ('HSV' if self.get_parameter('enable_hazmat').value else '✗')
+        # ── hazmat_mode='worker': reenviar frames al worker compartido y
+        # escuchar sus resultados. Misma image_qos (BEST_EFFORT, depth=1) que
+        # las cámaras — el worker solo necesita el frame más reciente.
+        if self._hazmat_mode == 'worker' and self.get_parameter('enable_hazmat').value:
+            self._hazmat_submit_pub = self.create_publisher(
+                CompressedImage, f'/hazmat/submit/{self._camera_id}', image_qos)
+            self.create_subscription(
+                StringMsg, f'/hazmat/result/{self._camera_id}',
+                self._on_hazmat_result, 5)
+            self.get_logger().info(
+                f'Hazmat en modo WORKER — camera_id={self._camera_id} '
+                f'(submit: /hazmat/submit/{self._camera_id}, '
+                f'result: /hazmat/result/{self._camera_id})')
+
+        if self._hazmat_mode == 'worker':
+            hazmat_status = 'WORKER'
+        elif self._hazmat_yolo:
+            hazmat_status = 'YOLO'
+        elif self.get_parameter('enable_hazmat').value:
+            hazmat_status = 'HSV'
+        else:
+            hazmat_status = '✗'
         self.get_logger().info(
             'ObjectDetector activo\n'
             '  AprilTag : ' + ('✓' if self._aruco_detector else '✗') + '\n'
-            '  Hazmat   : ' + hazmat_mode + '\n'
+            '  Hazmat   : ' + hazmat_status + '\n'
             '  YOLO obj : ' + ('✓' if self._yolo else '✗')
         )
 
@@ -298,25 +390,7 @@ class ObjectDetector(Node):
         if bgr is None:
             return
 
-        self._color_img = bgr
-        detections = []
-
-        if self._aruco_detector and self.get_parameter('enable_apriltag').value:
-            detections += self._detect_apriltags(bgr)
-
-        if self.get_parameter('enable_hazmat').value:
-            if self._hazmat_yolo:
-                detections += self._detect_hazmat_yolo(bgr)
-            else:
-                detections += self._detect_hazmat_hsv(bgr)
-
-        if self._yolo and self.get_parameter('enable_yolo').value:
-            detections += self._detect_yolo(bgr)
-
-        self._publish_annotated_frame(bgr, detections)
-
-        for det in detections:
-            self._process_detection(det)
+        self._process_frame(bgr)
 
     def _on_color(self, msg: Image) -> None:
         now = self.get_clock().now().nanoseconds * 1e-9
@@ -329,6 +403,10 @@ class ObjectDetector(Node):
         except Exception:
             return
 
+        self._process_frame(bgr)
+
+    def _process_frame(self, bgr: np.ndarray) -> None:
+        """Corre los tres detectores sobre un frame BGR y despacha resultados."""
         self._color_img = bgr
         detections = []
 
@@ -336,7 +414,10 @@ class ObjectDetector(Node):
             detections += self._detect_apriltags(bgr)
 
         if self.get_parameter('enable_hazmat').value:
-            if self._hazmat_yolo:
+            if self._hazmat_mode == 'worker':
+                detections += self._get_worker_hazmat_detections()
+                self._submit_frame_to_worker(bgr)
+            elif self._hazmat_yolo:
                 detections += self._detect_hazmat_yolo(bgr)
             else:
                 detections += self._detect_hazmat_hsv(bgr)
@@ -344,7 +425,9 @@ class ObjectDetector(Node):
         if self._yolo and self.get_parameter('enable_yolo').value:
             detections += self._detect_yolo(bgr)
 
-        self._publish_annotated_frame(bgr, detections)
+        annotated = self._draw_annotated(bgr, detections)
+        self._publish_annotated_frame(annotated)
+        self._update_hazmat_alerts(annotated, detections)
 
         for det in detections:
             self._process_detection(det)
@@ -384,25 +467,49 @@ class ObjectDetector(Node):
 
     def _detect_hazmat_yolo(self, bgr: np.ndarray) -> List[dict]:
         """Detecta señales hazmat con el modelo YOLO entrenado (49 clases)."""
-        results_out = []
         conf = float(self.get_parameter('hazmat_conf').value)
         try:
-            res = self._hazmat_yolo(bgr, conf=conf, verbose=False)
-            for r in res:
-                for box in r.boxes:
-                    cls_name = self._hazmat_yolo.names[int(box.cls[0])]
-                    x1, y1, x2, y2 = box.xyxy[0].tolist()
-                    cx = int((x1 + x2) / 2)
-                    cy = int((y1 + y2) / 2)
-                    results_out.append({
-                        'type': 'hazmat_sign',
-                        'name': cls_name.replace(' ', '_')[:20],
-                        'u': cx, 'v': cy,
-                        'x1': int(x1), 'y1': int(y1), 'x2': int(x2), 'y2': int(y2),
-                    })
+            return run_hazmat_yolo(self._hazmat_yolo, bgr, conf)
         except Exception as exc:
             self.get_logger().debug(f'Hazmat YOLO error: {exc}')
-        return results_out
+            return []
+
+    # ─── hazmat_mode='worker': reenvio de frames + consumo de resultados ──
+
+    def _submit_frame_to_worker(self, bgr: np.ndarray) -> None:
+        """Reenvia el frame actual al hazmat_worker compartido. El worker
+        decide, segun su propio scheduler de prioridad, si/cuando lo infiere
+        realmente — aqui solo se publica (QoS depth=1 descarta el anterior
+        si el worker todavia no lo habia consumido, nunca se acumulan)."""
+        if self._hazmat_submit_pub is None:
+            return
+        try:
+            _, buf = cv2.imencode('.jpg', bgr, [cv2.IMWRITE_JPEG_QUALITY, 80])
+        except Exception:
+            return
+        msg = CompressedImage()
+        msg.header.stamp = self.get_clock().now().to_msg()
+        msg.format = 'jpeg'
+        msg.data = buf.tobytes()
+        self._hazmat_submit_pub.publish(msg)
+
+    def _get_worker_hazmat_detections(self) -> List[dict]:
+        """Devuelve el ultimo resultado recibido del worker si todavia esta
+        "fresco" (worker_result_ttl) — evita que cajas viejas se queden
+        pegadas si el worker deja de atender esta camara por un tiempo."""
+        if not self._worker_latest_result:
+            return []
+        if time.time() - self._worker_latest_result_time > self._worker_result_ttl:
+            return []
+        return self._worker_latest_result
+
+    def _on_hazmat_result(self, msg: StringMsg) -> None:
+        try:
+            detections = json.loads(msg.data)
+        except (json.JSONDecodeError, TypeError):
+            return
+        self._worker_latest_result = detections
+        self._worker_latest_result_time = time.time()
 
     def _detect_hazmat_hsv(self, bgr: np.ndarray) -> List[dict]:
         """Fallback: detecta señales hazmat (diamante naranja) por color HSV + forma."""
@@ -469,17 +576,16 @@ class ObjectDetector(Node):
 
     # ─── Imagen anotada ──────────────────────────────────────────
 
-    def _publish_annotated_frame(self, bgr: np.ndarray, detections: list) -> None:
-        if self._annotated_pub.get_subscription_count() == 0:
-            return
-        _COLORS = {
-            'ar_code':     (0, 220, 255),
-            'hazmat_sign': (0, 120, 255),
-            'real_object': (60, 60, 255),
-        }
+    _DET_COLORS = {
+        'ar_code':     (0, 220, 255),
+        'hazmat_sign': (0, 120, 255),
+        'real_object': (60, 60, 255),
+    }
+
+    def _draw_annotated(self, bgr: np.ndarray, detections: list) -> np.ndarray:
         annotated = bgr.copy()
         for det in detections:
-            color = _COLORS.get(det['type'], (200, 200, 200))
+            color = self._DET_COLORS.get(det['type'], (200, 200, 200))
             x1 = det.get('x1', det['u'] - 20)
             y1 = det.get('y1', det['v'] - 20)
             x2 = det.get('x2', det['u'] + 20)
@@ -488,12 +594,96 @@ class ObjectDetector(Node):
             label = f"{det['type']} {det['name']}"
             cv2.putText(annotated, label, (x1, max(y1 - 5, 12)),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.48, color, 1, cv2.LINE_AA)
+        return annotated
+
+    def _publish_annotated_frame(self, annotated: np.ndarray) -> None:
+        if self._annotated_pub.get_subscription_count() == 0:
+            return
         _, buf = cv2.imencode('.jpg', annotated, [cv2.IMWRITE_JPEG_QUALITY, 75])
         out = CompressedImage()
         out.header.stamp = self.get_clock().now().to_msg()
         out.format = 'jpeg'
         out.data = buf.tobytes()
         self._annotated_pub.publish(out)
+
+    # ─── Alertas hazmat: confirmacion temporal + captura automatica ──
+
+    def _update_hazmat_alerts(self, annotated: np.ndarray, detections: list) -> None:
+        """
+        Una deteccion hazmat parpadea entre frames por ruido del modelo — para no
+        quedarnos con nada aprovechable, solo la contamos como "confirmada" (y
+        disparamos una captura para revision humana) cuando la misma clase
+        aparece en aprox. la misma zona durante `alert_confirm_frames` ciclos
+        seguidos. Sin eso, `require_depth=False` colapsa todas las señales a la
+        misma pose (0,0,0) y el dedup por distancia en `_process_detection`
+        oculta casi todo tras la primera.
+        """
+        if self._alerts_dir is None:
+            return
+
+        seen_now = set()
+        now = time.time()
+
+        for det in detections:
+            if det['type'] != 'hazmat_sign':
+                continue
+            name = det['name']
+            seen_now.add(name)
+            cx, cy = det['u'], det['v']
+
+            track = self._hazmat_track.get(name)
+            if track is not None:
+                dist = math.hypot(cx - track['cx'], cy - track['cy'])
+                if dist <= self._alert_pixel_tol:
+                    track['count'] += 1
+                else:
+                    track['count'] = 1
+            else:
+                track = {'count': 1}
+                self._hazmat_track[name] = track
+            track['cx'], track['cy'] = cx, cy
+            track['last_seen'] = now
+            track['det'] = det
+
+            if track['count'] < self._alert_confirm_frames:
+                continue
+            last_saved = self._alert_last_saved.get(name, 0.0)
+            if now - last_saved < self._alert_cooldown_sec:
+                continue
+
+            self._alert_last_saved[name] = now
+            self._save_alert_capture(annotated, det)
+
+        # Clases que no aparecieron este ciclo: reiniciar su racha de confirmacion.
+        for name in list(self._hazmat_track.keys()):
+            if name not in seen_now:
+                del self._hazmat_track[name]
+
+    def _save_alert_capture(self, annotated: np.ndarray, det: dict) -> None:
+        ts = datetime.datetime.now()
+        stamp = ts.strftime('%Y%m%d-%H%M%S-%f')[:-3]
+        safe_name = det['name'].replace('/', '_')
+        base = f'{stamp}_{safe_name}'
+
+        img_path = os.path.join(self._alerts_dir, base + '.jpg')
+        json_path = os.path.join(self._alerts_dir, base + '.json')
+        try:
+            cv2.imwrite(img_path, annotated)
+            with open(json_path, 'w') as f:
+                json.dump({
+                    'timestamp':  ts.isoformat(timespec='milliseconds'),
+                    'camera_id':  self._camera_id or 'default',
+                    'type':       det['type'],
+                    'name':       det['name'],
+                    'confidence': round(det.get('conf', 0.0), 4),
+                    'bbox_px':    [det.get('x1'), det.get('y1'), det.get('x2'), det.get('y2')],
+                    'image_file': os.path.basename(img_path),
+                }, f, indent=2)
+            self.get_logger().info(
+                f'[ALERTA HAZMAT] "{det["name"]}" confirmada '
+                f'(conf={det.get("conf", 0.0):.2f}) -> {img_path}')
+        except OSError as exc:
+            self.get_logger().warn(f'No se pudo guardar la alerta hazmat: {exc}')
 
     # ─── Localización 3D y registro ──────────────────────────────
 

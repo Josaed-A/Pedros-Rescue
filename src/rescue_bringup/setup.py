@@ -26,6 +26,7 @@ setup(
             'geotiff_writer = rescue_bringup.geotiff_writer:main',
             'pointcloud_accumulator = rescue_bringup.pointcloud_accumulator:main',
             'object_detector = rescue_bringup.object_detector:main',
+            'hazmat_worker = rescue_bringup.hazmat_worker:main',
             'logitech_pub = rescue_bringup.logitech_pub:main',
             'scan_merger = rescue_bringup.scan_merger:main',
         ],

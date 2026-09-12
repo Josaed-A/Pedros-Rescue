@@ -3,7 +3,7 @@
 Entrena YOLOv8 sobre el dataset de señales hazmat RoboCup Rescue 2026.
 
 Uso:
-    python3 training/train_hazmat.py [--epochs 50] [--model yolov8n.pt] [--imgsz 640]
+    python3 hazmat/training/train_hazmat.py [--epochs 50] [--model yolov8n.pt] [--imgsz 640]
 
 El modelo entrenado se guarda en:
     src/rescue_bringup/models/best.pt
@@ -14,7 +14,7 @@ import os
 import shutil
 from pathlib import Path
 
-ROOT = Path(__file__).parent.parent
+ROOT = Path(__file__).parent.parent.parent
 DATA_YAML = ROOT / "datasets" / "hazmat" / "data.yaml"
 OUTPUT_MODEL = ROOT / "src" / "rescue_bringup" / "models" / "best.pt"
 
@@ -66,7 +66,7 @@ def main():
         batch=args.batch,
         device=args.device if args.device else None,
         workers=args.workers,
-        project=str(ROOT / "training" / "runs"),
+        project=str(ROOT / "hazmat" / "training" / "runs"),
         name="hazmat",
         exist_ok=True,
         # Augmentaciones útiles para señales en escenarios de rescate

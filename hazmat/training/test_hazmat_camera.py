@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 test_hazmat_camera.py — detección hazmat en tiempo real.
-Uso: python3 training/test_hazmat_camera.py [--device 2] [--conf 0.4]
+Uso: python3 hazmat/training/test_hazmat_camera.py [--device 2] [--conf 0.4]
      Q / ESC → salir   |   +/- → confianza   |   S → screenshot
 """
 import os, sys
@@ -17,7 +17,7 @@ from pathlib import Path
 import cv2
 from ultralytics import YOLO
 
-ROOT  = Path(__file__).parent.parent
+ROOT  = Path(__file__).parent.parent.parent
 MODEL = ROOT / 'src' / 'rescue_bringup' / 'models' / 'best.pt'
 
 COLORS = [

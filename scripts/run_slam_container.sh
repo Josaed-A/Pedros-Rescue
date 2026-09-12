@@ -158,7 +158,7 @@ case "${1:-shell}" in
         CMD="source /opt/ros/jazzy/setup.bash && \
              source /workspace/install/setup.bash && \
              echo '━━━ Prueba detector hazmat (Logitech /dev/video${CAM_DEVICE}) ━━━' && \
-             python3 /workspace/training/test_hazmat_camera.py --device ${CAM_DEVICE}"
+             python3 /workspace/hazmat/training/test_hazmat_camera.py --device ${CAM_DEVICE}"
         ;;
 
     vision)

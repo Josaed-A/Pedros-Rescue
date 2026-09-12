@@ -7,8 +7,8 @@ En la Pi no hay GPU — ONNX Runtime corre mucho más rápido que PyTorch en ARM
 El modelo ONNX también funciona con OpenCV DNN (sin instalar ultralytics en la Pi).
 
 Uso:
-    python3 training/export_to_onnx.py
-    python3 training/export_to_onnx.py --model src/rescue_bringup/models/best.pt
+    python3 hazmat/training/export_to_onnx.py
+    python3 hazmat/training/export_to_onnx.py --model src/rescue_bringup/models/best.pt
 
 Salida:
     src/rescue_bringup/models/best.onnx
@@ -17,7 +17,7 @@ Salida:
 import argparse
 from pathlib import Path
 
-ROOT = Path(__file__).parent.parent
+ROOT = Path(__file__).parent.parent.parent
 DEFAULT_PT   = ROOT / 'src' / 'rescue_bringup' / 'models' / 'best.pt'
 DEFAULT_ONNX = ROOT / 'src' / 'rescue_bringup' / 'models' / 'best.onnx'
 
@@ -42,7 +42,7 @@ def main():
     pt_path = Path(args.model)
     if not pt_path.exists():
         print(f'ERROR: No se encontró {pt_path}')
-        print('Entrena primero con: python3 training/train_hazmat.py')
+        print('Entrena primero con: python3 hazmat/training/train_hazmat.py')
         raise SystemExit(1)
 
     print(f'Exportando {pt_path} → ONNX ...')

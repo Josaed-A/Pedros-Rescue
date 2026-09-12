@@ -16,6 +16,8 @@ from rclpy.qos import QoSHistoryPolicy, QoSProfile, QoSReliabilityPolicy
 from sensor_msgs.msg import CompressedImage, Joy, JointState, PointCloud2
 from std_msgs.msg import Bool, Float32, String
 from std_srvs.srv import Trigger
+from rescue_interfaces.msg import ArmStatus
+from rescue_interfaces.srv import ServoCommand
 import tf2_ros
 
 from rescue_command_station.control import config as cfg
@@ -66,10 +68,10 @@ LEG_LABELS = {
     'PataDelIzq': 'Del · Izq', 'PataDelDer': 'Del · Der',
     'PataTrasIzq': 'Tras · Izq', 'PataTrasDer': 'Tras · Der',
 }
-# Simbolo del boton cara del mando segun su indice (X, O, cuadrado, triangulo).
+# Letra del boton cara del Xbox segun su indice.
 _BTN_SYMBOL = {
-    cfg.BUTTON_CROSS: '✕', cfg.BUTTON_CIRCLE: '○',
-    cfg.BUTTON_SQUARE: '□', cfg.BUTTON_TRIANGLE: '△',
+    cfg.BUTTON_A: 'A', cfg.BUTTON_B: 'B',
+    cfg.BUTTON_X: 'X', cfg.BUTTON_Y: 'Y',
 }
 
 
@@ -79,13 +81,20 @@ class DashboardRosNode(Node):
 
         self.declare_parameter('front_camera_topic',    '/robot/camera/front/image_raw/compressed')
         self.declare_parameter('astra_color_topic',     '/robot/camera/astra/color/image_raw/compressed')
-        self.declare_parameter('astra_annotated_topic', '/camera/color/image_annotated/compressed')
+        # object_detector procesa la camara FRONTAL (Logitech/GENERAL WEBCAM), no la Astra —
+        # el nombre del topic es historico ('camera/color'), pero la fuente es la frontal.
+        self.declare_parameter('front_annotated_topic', '/camera/color/image_annotated/compressed')
+        # Vacio por defecto: en el robot real la Astra no corre deteccion. Solo se usa
+        # cuando algo la alimenta de verdad (p.ej. test_local_cameras.launch.py con
+        # un object_detector propio sobre la camara que ocupa el slot Astra).
+        self.declare_parameter('astra_annotated_topic', '')
         self.declare_parameter('astra_depth_topic',     '/robot/camera/astra/depth/image_raw/compressed')
         self.declare_parameter('point_cloud_topic',     '/robot/camera/astra/points')
         self.declare_parameter('raspberry_timeout_seconds', 2.5)
 
         self.front_camera_topic    = self.get_parameter('front_camera_topic').value
         self.astra_color_topic     = self.get_parameter('astra_color_topic').value
+        self.front_annotated_topic = self.get_parameter('front_annotated_topic').value
         self.astra_annotated_topic = self.get_parameter('astra_annotated_topic').value
         self.astra_depth_topic     = self.get_parameter('astra_depth_topic').value
         self.point_cloud_topic     = self.get_parameter('point_cloud_topic').value
@@ -96,9 +105,11 @@ class DashboardRosNode(Node):
 
         self.latest_front_frame           = None
         self.latest_astra_color_frame     = None
+        self.latest_front_annotated_frame = None
         self.latest_astra_annotated_frame = None
         self.front_camera_frames          = 0
         self.astra_color_frames           = 0
+        self.front_annotated_frames       = 0
         self.astra_annotated_frames       = 0
         self.latest_qr_text               = ''
         self.last_qr_scan_time            = 0.0
@@ -135,7 +146,10 @@ class DashboardRosNode(Node):
         self.create_subscription(Float32,         '/real_speed_abs',          self.real_speed_callback, 10)
         self.create_subscription(CompressedImage, self.front_camera_topic,    self.front_camera_callback, sensor_qos)
         self.create_subscription(CompressedImage, self.astra_color_topic,     self.astra_color_callback, sensor_qos)
-        self.create_subscription(CompressedImage, self.astra_annotated_topic, self.astra_annotated_callback, sensor_qos)
+        self.create_subscription(CompressedImage, self.front_annotated_topic, self.front_annotated_callback, sensor_qos)
+        if self.astra_annotated_topic:
+            self.create_subscription(
+                CompressedImage, self.astra_annotated_topic, self.astra_annotated_callback, sensor_qos)
         self.create_subscription(CompressedImage, self.astra_depth_topic,     self._noop, sensor_qos)
         self.create_subscription(PointCloud2,     self.point_cloud_topic,     self._noop_pc, sensor_qos)
         self.create_subscription(String,          '/object_detections',       self.detections_callback, 10)
@@ -168,10 +182,37 @@ class DashboardRosNode(Node):
                                     self.create_client(Trigger, '/ex106/disconnect')]
         self._ax_connect_client  = self._connect_clients[0]   # compat
 
+        # ── Jog de Base/Codo/Munieca_Y/Hombro desde el dashboard (D-pad,
+        # gatillos LT/RT, Y/A), igual de "mientras se mantiene"
+        # que las patas. Base/Codo/Munieca_Y viven en el bus AX-12A, Hombro
+        # en el EX-106 (ver arm.yaml). ──
+        self.declare_parameter('arm_jog_step_deg', 2.0)
+        self.declare_parameter('arm_jog_vel_pct', 20.0)
+        self._arm_jog_step_deg = float(self.get_parameter('arm_jog_step_deg').value)
+        self._arm_jog_vel_pct  = float(self.get_parameter('arm_jog_vel_pct').value)
+        # nombre -> (driver, id_servo) segun arm.yaml (joint_drivers)
+        self._ARM_JOG_SERVOS = {
+            'Base':      ('ax', 16),
+            'Codo':      ('ax', 18),
+            'Munieca_Y': ('ax', 4),
+            'Hombro':    ('ex', 1),
+        }
+        self.arm_jog_active_name = None   # nombre del joint jogeando ahora, o None
+        self.arm_jog_block_reason = ''    # por que el ultimo intento no se envio
+        self._ax_status = {'conectado': False, 'emergencia': False}
+        self._ex_status = {'conectado': False, 'emergencia': False}
+        self._arm_q = {name: 0.0 for name in self._ARM_JOG_SERVOS}   # rad, en vivo
+        self._arm_jog_inflight: set = set()
+        self.create_subscription(ArmStatus, '/ax12a/status', self._cb_ax_status_arm, 10)
+        self.create_subscription(ArmStatus, '/ex106/status', self._cb_ex_status_arm, 10)
+        self.create_subscription(JointState, '/arm/joint_states', self._cb_arm_joint_states, 10)
+        self._ax_jog_client = self.create_client(ServoCommand, '/ax12a/jog')
+        self._ex_jog_client = self.create_client(ServoCommand, '/ex106/jog')
+
         # ── Estado de botones del mando (deteccion de flanco) ──────────
         self._prev_buttons = []
-        self._dpad_prev = False          # flanco flecha ABAJO (cambio de GUI)
-        self._dpad_x_prev = False        # flanco flecha DERECHA (reconectar buses)
+        self._l1r1_prev = False          # flanco L1+R1 juntos (cambio de GUI)
+        self._reconnect_btn_prev = False # flanco boton reconectar buses
         self.reconnect_requested = False # la GUI lo lee para reconectar AX+EX
         self.switch_gui_requested = False   # la GUI lo lee para alternar interfaz
         self.legs_enabled_dirty   = True    # fuerza al GUI a sincronizar checkboxes
@@ -189,7 +230,10 @@ class DashboardRosNode(Node):
         self._bus_reset_pub = self.create_publisher(Bool, '/bus_reset', 10)
 
         # ── Auto-conexion de los buses al arrancar (sin boton "conectar") ──
-        self._autoconnected = False
+        # Cada cliente se reintenta por separado hasta quedar listo: el driver
+        # EX-106 suele tardar mas en arrancar que el AX-12A, y una sola pasada
+        # "todo o nada" dejaba el EX sin conectar si aun no estaba listo.
+        self._autoconnect_pending = set(self._connect_clients)
         self.create_timer(1.0, self._auto_connect_once)
 
         self.get_logger().info('Dashboard iniciado — vision, mapeo y control')
@@ -205,17 +249,13 @@ class DashboardRosNode(Node):
             self.switch_gui_requested = True
 
     def _auto_connect_once(self):
-        """Conecta los buses de servos automaticamente cuando los servicios
-        esten listos (una sola vez)."""
-        if self._autoconnected:
-            return
-        ready = [c for c in self._connect_clients if c.service_is_ready()]
-        if not ready:
-            return
-        for c in ready:
-            c.call_async(Trigger.Request())
-        self._autoconnected = True
-        self.get_logger().info('Auto-conexion de servos enviada.')
+        """Conecta cada bus de servos automaticamente en cuanto su servicio
+        quede listo (una vez por cliente, no una vez para todos)."""
+        for c in list(self._autoconnect_pending):
+            if c.service_is_ready():
+                c.call_async(Trigger.Request())
+                self._autoconnect_pending.discard(c)
+                self.get_logger().info(f'Auto-conexion enviada: {c.srv_name}')
 
     def connect_all(self):
         for c in self._connect_clients:
@@ -256,6 +296,59 @@ class DashboardRosNode(Node):
 
     def _noop_pc(self, _msg):
         self.mark_raspberry_seen(self.point_cloud_topic)
+
+    # ── Jog de Base/Codo/Munieca_Y/Hombro (D-pad + gatillos + Y/A,
+    # "mientras se mantiene") ──
+    def _cb_ax_status_arm(self, msg):
+        self._ax_status['conectado']  = msg.conectado
+        self._ax_status['emergencia'] = msg.emergencia
+
+    def _cb_ex_status_arm(self, msg):
+        self._ex_status['conectado']  = msg.conectado
+        self._ex_status['emergencia'] = msg.emergencia
+
+    def _cb_arm_joint_states(self, msg):
+        for name, pos in zip(msg.name, msg.position):
+            if name in self._arm_q:
+                self._arm_q[name] = pos
+
+    def jog_arm_servo(self, name, sign):
+        """Jog directo (sin IK) del servo `name`: target = angulo actual + paso,
+        igual que el Jog manual de la GUI del brazo. Guardia in-flight por
+        joint para no acumular llamadas mientras se mantiene el control.
+        Guarda en self.arm_jog_block_reason por que NO se movio (para la
+        GUI), o '' si el ultimo intento sí se envio."""
+        driver, sid = self._ARM_JOG_SERVOS[name]
+        status = self._ax_status if driver == 'ax' else self._ex_status
+        client = self._ax_jog_client if driver == 'ax' else self._ex_jog_client
+
+        if name in self._arm_jog_inflight:
+            self.arm_jog_block_reason = ''   # ya en curso, no es un bloqueo real
+            return
+        if not status['conectado']:
+            self.arm_jog_block_reason = f'{driver.upper()} SIN CONEXION'
+            return
+        if status['emergencia']:
+            self.arm_jog_block_reason = f'{driver.upper()} EN PARO DE EMERGENCIA'
+            return
+        if not client.service_is_ready():
+            svc = '/ax12a/jog' if driver == 'ax' else '/ex106/jog'
+            self.arm_jog_block_reason = f'servicio {svc} no disponible'
+            return
+
+        self.arm_jog_block_reason = ''
+        current_deg = math.degrees(self._arm_q.get(name, 0.0))
+        target = (current_deg + sign * self._arm_jog_step_deg) % 360.0
+        req = ServoCommand.Request()
+        req.id         = sid
+        req.target_deg = float(target)
+        req.vel_pct    = self._arm_jog_vel_pct
+        self._arm_jog_inflight.add(name)
+
+        def _done(_f):
+            self._arm_jog_inflight.discard(name)
+
+        self._ax_jog_client.call_async(req).add_done_callback(_done)
 
     # ── Callbacks ────────────────────────────────────────────────
     def drive_status_callback(self, msg):
@@ -313,6 +406,13 @@ class DashboardRosNode(Node):
         except Exception as exc:
             self.get_logger().warn(f'astra_color: {exc}')
 
+    def front_annotated_callback(self, msg):
+        try:
+            self.latest_front_annotated_frame = compressed_msg_to_numpy(msg)
+            self.front_annotated_frames += 1
+        except Exception as exc:
+            self.get_logger().warn(f'front_annotated: {exc}')
+
     def astra_annotated_callback(self, msg):
         try:
             self.latest_astra_annotated_frame = compressed_msg_to_numpy(msg)
@@ -331,9 +431,9 @@ class DashboardRosNode(Node):
             now = self.now_seconds()
             if now - self._shown_detection_keys.get(key, 0.0) > self._detection_popup_cooldown:
                 self._shown_detection_keys[key] = now
-                snap = (self.latest_astra_annotated_frame
-                        if self.latest_astra_annotated_frame is not None
-                        else self.latest_astra_color_frame)
+                snap = (self.latest_front_annotated_frame
+                        if self.latest_front_annotated_frame is not None
+                        else self.latest_front_frame)
                 self._popup_queue.append({
                     'kind': 'detection',
                     'det': det,
@@ -363,12 +463,13 @@ class DashboardRosNode(Node):
         deshabilitadas no se mueven (para controlar solo una).
         Botones cara → habilitan/deshabilitan cada pata.
 
-        La CRUZ (cambio de GUI) funciona SIEMPRE. El resto del control de
-        patas (sticks y botones cara) solo cuando el dashboard esta al frente:
+        L1+R1 (cambio de GUI) y el boton de reconexion funcionan SIEMPRE.
+        El resto del control de patas (sticks y botones cara) y el jog del
+        brazo por D-pad/gatillos solo cuando el dashboard esta al frente:
         si la GUI del brazo esta activa, el mando controla el brazo, no las
         patas (legs_control_active=False)."""
-        # 1) Cruz -> alternar interfaz (siempre, en cualquier GUI)
-        self._handle_dpad(msg)
+        # 1) Combos globales -> alternar interfaz / reconectar buses (siempre)
+        self._handle_global_combos(msg)
 
         # 2) Si el brazo esta al frente, el dashboard NO toca las patas.
         if not self.legs_control_active:
@@ -398,22 +499,69 @@ class DashboardRosNode(Node):
             cmd.velocity.append(float(rear_dir if self.legs_enabled[n] else 0))
         self._legs_cmd_pub.publish(cmd)
 
-    def _handle_dpad(self, msg):
-        """Flechas del D-pad (activas siempre, en cualquier GUI):
-          - ABAJO  → alternar entre dashboard (movimiento) y GUI del brazo
-          - DERECHA → reiniciar la conexion de los buses (AX-12A y EX-106)."""
-        ax = msg.axes
-        down = (cfg.DPAD_AXIS_Y < len(ax) and
-                ax[cfg.DPAD_AXIS_Y] * cfg.DPAD_Y_DOWN > 0.5)
-        if down and not self._dpad_prev:
-            self.switch_gui_requested = True
-        self._dpad_prev = down
+        # 5) D-pad izq/der -> jog Base; D-pad arriba/abajo -> jog Codo;
+        # gatillos LT/RT -> jog Munieca_Y; Y/A -> jog Hombro.
+        # "Mientras se mantiene", igual que las patas (el guard in-flight de
+        # jog_arm_servo limita la tasa).
+        self._handle_arm_jog(msg)
 
-        right = (cfg.DPAD_AXIS_X < len(ax) and
-                 ax[cfg.DPAD_AXIS_X] * cfg.DPAD_X_RIGHT > 0.5)
-        if right and not self._dpad_x_prev:
+    def _handle_arm_jog(self, msg):
+        ax = msg.axes
+        btn = msg.buttons
+        active_name = None
+
+        # D-pad izquierda/derecha -> Base
+        if cfg.DPAD_AXIS_X < len(ax):
+            x = ax[cfg.DPAD_AXIS_X] * cfg.DPAD_X_RIGHT
+            if x > 0.5:
+                self.jog_arm_servo('Base', +1.0); active_name = 'Base'
+            elif x < -0.5:
+                self.jog_arm_servo('Base', -1.0); active_name = 'Base'
+
+        # D-pad arriba/abajo -> Codo
+        if cfg.DPAD_AXIS_Y < len(ax):
+            y = ax[cfg.DPAD_AXIS_Y] * cfg.DPAD_Y_DOWN
+            if y > 0.5:
+                self.jog_arm_servo('Codo', +1.0); active_name = 'Codo'
+            elif y < -0.5:
+                self.jog_arm_servo('Codo', -1.0); active_name = 'Codo'
+
+        # Gatillos LT/RT -> Munieca_Y (2a articulacion de la muneca)
+        if max(cfg.AXIS_L2, cfg.AXIS_R2) < len(ax):
+            l2 = cfg.trigger_value(ax[cfg.AXIS_L2])
+            r2 = cfg.trigger_value(ax[cfg.AXIS_R2])
+            delta = r2 - l2
+            if abs(delta) > 1e-3:
+                self.jog_arm_servo('Munieca_Y', 1.0 if delta > 0 else -1.0)
+                active_name = 'Munieca_Y'
+
+        # Y/A -> Hombro (EX-106), mientras se mantienen presionados
+        if cfg.BUTTON_HOMBRO_POS < len(btn) and btn[cfg.BUTTON_HOMBRO_POS]:
+            self.jog_arm_servo('Hombro', +1.0); active_name = 'Hombro'
+        elif cfg.BUTTON_HOMBRO_NEG < len(btn) and btn[cfg.BUTTON_HOMBRO_NEG]:
+            self.jog_arm_servo('Hombro', -1.0); active_name = 'Hombro'
+
+        if active_name is None:
+            self.arm_jog_block_reason = ''
+        self.arm_jog_active_name = active_name
+
+    def _handle_global_combos(self, msg):
+        """Combos activos siempre, en cualquier GUI:
+          - L1+R1 juntos → alternar entre dashboard (movimiento) y GUI del brazo
+          - boton Menu → reiniciar la
+            conexion de los buses (AX-12A y EX-106)."""
+        btn = msg.buttons
+
+        l1r1 = (cfg.BUTTON_L1 < len(btn) and cfg.BUTTON_R1 < len(btn) and
+                btn[cfg.BUTTON_L1] and btn[cfg.BUTTON_R1])
+        if l1r1 and not self._l1r1_prev:
+            self.switch_gui_requested = True
+        self._l1r1_prev = l1r1
+
+        reconn = cfg.BUTTON_RECONNECT < len(btn) and btn[cfg.BUTTON_RECONNECT]
+        if reconn and not self._reconnect_btn_prev:
             self.reconnect_requested = True
-        self._dpad_x_prev = right
+        self._reconnect_btn_prev = reconn
 
     def _handle_leg_buttons(self, msg):
         """Flanco de subida de los botones cara → toggle de cada pata."""
@@ -443,6 +591,7 @@ class ModernDashboardApp:
         self.astra_camera_photo    = None
         self.rendered_front_frames = -1
         self.rendered_astra_frames = -1
+        self._last_front_annotated = -1
         self._last_astra_annotated = -1
 
         # Mission state
@@ -557,6 +706,11 @@ class ModernDashboardApp:
                                        font=(FONT, 10, 'bold'), padx=16, pady=8)
         self.raspberry_pill.grid(row=0, column=2, sticky='e', padx=(10, 0))
 
+        self.arm_jog_pill = tk.Label(header, text='BRAZO: QUIETO',
+                                     bg=COLORS['surface_high'], fg=COLORS['muted'],
+                                     font=(FONT, 10, 'bold'), padx=16, pady=8)
+        self.arm_jog_pill.grid(row=0, column=3, sticky='e', padx=(10, 0))
+
     # ─── Drive panel (unchanged) ──────────────────────────────────────────
 
     def build_drive_panel(self, parent):
@@ -593,7 +747,7 @@ class ModernDashboardApp:
         panel.grid_rowconfigure(1, weight=1)
         panel.grid_columnconfigure(0, weight=1)
 
-        self.card_title(panel, 'Vision en vivo', 'Frontal (QR) + Astra color (deteccion IA)')
+        self.card_title(panel, 'Vision en vivo', 'Frontal (QR + hazmat/AprilTag/YOLO) + Astra color')
 
         cameras_frame = tk.Frame(panel, bg=COLORS['surface'])
         cameras_frame.pack(fill='both', expand=True, pady=(10, 0))
@@ -601,12 +755,12 @@ class ModernDashboardApp:
         cameras_frame.grid_columnconfigure(1, weight=2)
         cameras_frame.grid_rowconfigure(0, weight=1)
 
-        front_slot = self.video_slot(cameras_frame, 'Camara frontal (Logitech)',
+        front_slot = self.video_slot(cameras_frame, 'Camara frontal (Logitech · deteccion IA)',
                                      self.vars['front_camera'], 'Esperando camara frontal...')
         front_slot.grid(row=0, column=0, sticky='nsew', padx=(0, 10))
         self.front_camera_label = front_slot.image_label
 
-        astra_slot = self.video_slot(cameras_frame, 'Astra color (YOLO activo)',
+        astra_slot = self.video_slot(cameras_frame, 'Astra color',
                                      self.vars['astra_camera'], 'Esperando Astra...')
         astra_slot.grid(row=0, column=1, sticky='nsew')
         self.astra_camera_label = astra_slot.image_label
@@ -1367,6 +1521,7 @@ class ModernDashboardApp:
         self.refresh_cameras()
         self._refresh_det_tree()
         self._refresh_legs()
+        self._refresh_arm_jog_pill()
         self._check_popup_queue()
         self.root.after(50, self.refresh_ui)
 
@@ -1376,6 +1531,17 @@ class ModernDashboardApp:
             self.raspberry_pill.configure(text='RASP CONECTADA', fg=COLORS['green'])
         else:
             self.raspberry_pill.configure(text='RASP DESCONECTADA', fg=COLORS['red'])
+
+    def _refresh_arm_jog_pill(self):
+        name   = self.ros_node.arm_jog_active_name
+        reason = self.ros_node.arm_jog_block_reason
+        if name and reason:
+            self.arm_jog_pill.configure(text=f'BRAZO: {name} BLOQUEADO ({reason})',
+                                        fg=COLORS['red'])
+        elif name:
+            self.arm_jog_pill.configure(text=f'BRAZO: MOVIENDO {name} ●', fg=COLORS['amber'])
+        else:
+            self.arm_jog_pill.configure(text='BRAZO: QUIETO', fg=COLORS['muted'])
 
     def refresh_drive_status(self):
         s = self.ros_node.status
@@ -1410,26 +1576,40 @@ class ModernDashboardApp:
         self.draw_tracks(left, right)
 
     def refresh_cameras(self):
-        self.vars['front_camera'].set(
-            f'{self.ros_node.front_camera_topic} | {self.ros_node.front_camera_frames} fr')
-        if self.ros_node.front_camera_frames != self.rendered_front_frames:
+        # Panel frontal: si object_detector esta activo (hazmat/AprilTag/YOLO),
+        # muestra el frame ya anotado con las cajas; si no, el crudo de la Logitech.
+        ann = self.ros_node.front_annotated_frames
+        raw = self.ros_node.front_camera_frames
+        if ann != self._last_front_annotated and ann > 0:
+            self.vars['front_camera'].set(f'Deteccion IA (hazmat/AprilTag/YOLO) | {ann} fr')
+            self.update_video_image(self.ros_node.latest_front_annotated_frame,
+                                    self.front_camera_label, 'front_camera_photo', 560, 390)
+            self._last_front_annotated = ann
+            self.rendered_front_frames = raw
+        elif raw != self.rendered_front_frames:
+            self.vars['front_camera'].set(
+                f'{self.ros_node.front_camera_topic} | {raw} fr')
             self.update_video_image(self.ros_node.latest_front_frame,
                                     self.front_camera_label, 'front_camera_photo', 560, 390)
-            self.rendered_front_frames = self.ros_node.front_camera_frames
+            self.rendered_front_frames = raw
 
-        ann = self.ros_node.astra_annotated_frames
-        raw = self.ros_node.astra_color_frames
-        if ann != self._last_astra_annotated and ann > 0:
-            self.vars['astra_camera'].set(f'Annotated YOLO | {ann} fr')
+        # Panel Astra: igual que el frontal, prefiere el frame anotado cuando algo
+        # lo alimenta (solo pasa en pruebas locales — en el robot real la Astra
+        # no corre deteccion y este topic queda vacio/sin publicador).
+        astra_ann = self.ros_node.astra_annotated_frames
+        astra_raw = self.ros_node.astra_color_frames
+        if astra_ann != self._last_astra_annotated and astra_ann > 0:
+            self.vars['astra_camera'].set(f'Deteccion IA (Astra) | {astra_ann} fr')
             self.update_video_image(self.ros_node.latest_astra_annotated_frame,
                                     self.astra_camera_label, 'astra_camera_photo', 380, 290)
-            self._last_astra_annotated = ann
-            self.rendered_astra_frames = raw
-        elif raw != self.rendered_astra_frames:
-            self.vars['astra_camera'].set(f'{self.ros_node.astra_color_topic} | {raw} fr')
+            self._last_astra_annotated = astra_ann
+            self.rendered_astra_frames = astra_raw
+        elif astra_raw != self.rendered_astra_frames:
+            self.vars['astra_camera'].set(
+                f'{self.ros_node.astra_color_topic} | {astra_raw} fr')
             self.update_video_image(self.ros_node.latest_astra_color_frame,
                                     self.astra_camera_label, 'astra_camera_photo', 380, 290)
-            self.rendered_astra_frames = raw
+            self.rendered_astra_frames = astra_raw
 
         self.vars['qr'].set(self.ros_node.latest_qr_text or 'Sin QR detectado')
 
