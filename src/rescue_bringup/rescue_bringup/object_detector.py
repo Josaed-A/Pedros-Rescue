@@ -34,6 +34,7 @@ import json
 import math
 import os
 import time
+from collections import OrderedDict
 from typing import Dict, List, Optional, Tuple
 
 import numpy as np
@@ -127,7 +128,10 @@ class ObjectDetector(Node):
         # y mezcla los resultados que le llegan de vuelta en el mismo pipeline
         # (dibujo, alertas, CSV, RViz siguen identicos). Requiere `camera_id`.
         self.declare_parameter('hazmat_mode',        'local')
-        self.declare_parameter('worker_result_ttl',  2.0)
+        # Buffer pequeño y acotado de frames recientes (por seq) esperando su
+        # resultado hazmat — evita dibujar un resultado sobre un frame que no
+        # lo produjo. Ver _submit_frame_to_worker / _on_hazmat_result.
+        self.declare_parameter('frame_buffer_maxlen', 12)
 
         # ── Configuración de topics (compatible con ambos drivers) ──
         # use_compressed=false → driver oficial astra_camera / orbbec_camera (raw Image)
@@ -183,10 +187,15 @@ class ObjectDetector(Node):
             self.get_logger().warn(
                 "hazmat_mode='worker' requiere 'camera_id' — cayendo a modo 'local'")
             self._hazmat_mode = 'local'
-        self._worker_result_ttl = float(self.get_parameter('worker_result_ttl').value)
-        self._worker_latest_result: List[dict] = []
-        self._worker_latest_result_time = 0.0
         self._hazmat_submit_pub = None
+
+        # Buffer de frames en vuelo hacia el worker: seq -> {'bgr', 'detections'}.
+        # Pequeño y acotado (FIFO) — nunca se "reutiliza" una entrada vieja para
+        # un resultado nuevo; si el resultado llega despues de que su entrada
+        # fue expulsada, se descarta (ver _on_hazmat_result).
+        self._frame_seq = 0
+        self._frame_buffer: "OrderedDict[int, dict]" = OrderedDict()
+        self._frame_buffer_maxlen = max(1, int(self.get_parameter('frame_buffer_maxlen').value))
 
         # ── Tracking + captura automatica de alertas hazmat ─────────────
         self._alert_confirm_frames = int(self.get_parameter('alert_confirm_frames').value)
@@ -250,7 +259,7 @@ class ObjectDetector(Node):
         # Modelo hazmat entrenado (reemplaza detector HSV cuando está disponible).
         # En hazmat_mode='worker' NO se carga aqui — lo carga una sola vez el
         # hazmat_worker compartido; esta instancia solo reenvia frames y recibe
-        # resultados (ver _maybe_submit_frame_to_worker / _on_hazmat_result).
+        # resultados (ver _submit_frame_to_worker / _on_hazmat_result).
         self._hazmat_yolo = None
         hazmat_model_path = self.get_parameter('hazmat_model').value
         if self._hazmat_mode == 'local' and _YOLO_OK and self.get_parameter('enable_hazmat').value \
@@ -406,24 +415,33 @@ class ObjectDetector(Node):
         self._process_frame(bgr)
 
     def _process_frame(self, bgr: np.ndarray) -> None:
-        """Corre los tres detectores sobre un frame BGR y despacha resultados."""
+        """Corre los tres detectores sobre un frame BGR y despacha resultados.
+
+        AprilTag y YOLO-objetos se calculan aqui mismo, de forma sincrona,
+        sobre `bgr` — sin cambios. En hazmat_mode='worker', el hazmat NO se
+        agrega a `detections` en este metodo: se reenvia el frame (ya con las
+        detecciones locales encontradas hasta el momento, para poder fusionarlas
+        despues) al worker compartido, y el resultado se dibuja/publica mas
+        tarde, de forma asincrona, sobre ESE MISMO frame exacto cuando llegue
+        (ver _submit_frame_to_worker / _on_hazmat_result). Asi nunca se pinta
+        un resultado hazmat viejo sobre el frame actual.
+        """
         self._color_img = bgr
         detections = []
 
         if self._aruco_detector and self.get_parameter('enable_apriltag').value:
             detections += self._detect_apriltags(bgr)
 
+        if self._yolo and self.get_parameter('enable_yolo').value:
+            detections += self._detect_yolo(bgr)
+
         if self.get_parameter('enable_hazmat').value:
             if self._hazmat_mode == 'worker':
-                detections += self._get_worker_hazmat_detections()
-                self._submit_frame_to_worker(bgr)
+                self._submit_frame_to_worker(bgr, detections)
             elif self._hazmat_yolo:
                 detections += self._detect_hazmat_yolo(bgr)
             else:
                 detections += self._detect_hazmat_hsv(bgr)
-
-        if self._yolo and self.get_parameter('enable_yolo').value:
-            detections += self._detect_yolo(bgr)
 
         annotated = self._draw_annotated(bgr, detections)
         self._publish_annotated_frame(annotated)
@@ -475,41 +493,85 @@ class ObjectDetector(Node):
             return []
 
     # ─── hazmat_mode='worker': reenvio de frames + consumo de resultados ──
+    #
+    # Cada frame reenviado lleva un token de identidad — "camera_id#seq" en
+    # header.frame_id, timestamp de captura en header.stamp — para que el
+    # resultado que vuelva del worker se pueda emparejar EXACTAMENTE con el
+    # frame que lo produjo. No se depende solo del topic (que ya aisla por
+    # camara) como unica fuente de verdad: camera_id tambien viaja dentro del
+    # mensaje y se valida al recibir el resultado.
 
-    def _submit_frame_to_worker(self, bgr: np.ndarray) -> None:
-        """Reenvia el frame actual al hazmat_worker compartido. El worker
-        decide, segun su propio scheduler de prioridad, si/cuando lo infiere
-        realmente — aqui solo se publica (QoS depth=1 descarta el anterior
-        si el worker todavia no lo habia consumido, nunca se acumulan)."""
+    def _submit_frame_to_worker(self, bgr: np.ndarray, local_detections: list) -> None:
+        """Reenvia el frame actual al hazmat_worker compartido y lo guarda en
+        un buffer chico y acotado (FIFO) indexado por su numero de secuencia.
+        `local_detections` (AprilTag/YOLO-objetos ya calculados para ESTE
+        frame) se guarda junto al frame para poder fusionarlos con el
+        resultado hazmat cuando llegue, sin recalcular nada.
+
+        El worker decide, segun su propio scheduler de prioridad, si/cuando
+        infiere realmente este frame — aqui solo se publica (QoS depth=1
+        descarta el anterior si el worker todavia no lo habia consumido,
+        nunca se acumulan frames viejos en el transporte)."""
         if self._hazmat_submit_pub is None:
             return
+
+        self._frame_seq += 1
+        seq = self._frame_seq
+        self._frame_buffer[seq] = {'bgr': bgr, 'detections': list(local_detections)}
+        while len(self._frame_buffer) > self._frame_buffer_maxlen:
+            self._frame_buffer.popitem(last=False)  # descarta la entrada mas vieja
+
         try:
             _, buf = cv2.imencode('.jpg', bgr, [cv2.IMWRITE_JPEG_QUALITY, 80])
         except Exception:
             return
         msg = CompressedImage()
         msg.header.stamp = self.get_clock().now().to_msg()
+        msg.header.frame_id = f'{self._camera_id}#{seq}'
         msg.format = 'jpeg'
         msg.data = buf.tobytes()
         self._hazmat_submit_pub.publish(msg)
 
-    def _get_worker_hazmat_detections(self) -> List[dict]:
-        """Devuelve el ultimo resultado recibido del worker si todavia esta
-        "fresco" (worker_result_ttl) — evita que cajas viejas se queden
-        pegadas si el worker deja de atender esta camara por un tiempo."""
-        if not self._worker_latest_result:
-            return []
-        if time.time() - self._worker_latest_result_time > self._worker_result_ttl:
-            return []
-        return self._worker_latest_result
-
     def _on_hazmat_result(self, msg: StringMsg) -> None:
+        """Empareja el resultado con el frame EXACTO que lo produjo (por
+        camera_id + frame_seq) y dibuja/publica solo sobre ese frame — nunca
+        sobre el frame "actual" de este ciclo, que puede ser otro distinto.
+        Si el frame ya no esta en el buffer (demasiado viejo, ya expulsado),
+        el resultado se descarta. Un resultado vacio (sin detecciones) igual
+        se procesa: invalida cualquier racha de confirmacion pendiente para
+        esta camara en vez de dejarla "colgada"."""
         try:
-            detections = json.loads(msg.data)
+            payload = json.loads(msg.data)
         except (json.JSONDecodeError, TypeError):
             return
-        self._worker_latest_result = detections
-        self._worker_latest_result_time = time.time()
+
+        result_camera_id = payload.get('camera_id')
+        if result_camera_id != self._camera_id:
+            # No depender solo del topic: si por algun motivo llega un
+            # resultado con otro camera_id, se descarta explicitamente.
+            self.get_logger().warn(
+                f'Resultado hazmat con camera_id "{result_camera_id}" '
+                f'!= esperado "{self._camera_id}" — descartado')
+            return
+
+        seq = payload.get('frame_seq')
+        entry = self._frame_buffer.pop(seq, None)
+        if entry is None:
+            self.get_logger().debug(
+                f'Resultado hazmat para frame_seq={seq} ya no disponible '
+                f'en el buffer (expirado/expulsado) — descartado')
+            return
+
+        hazmat_detections = payload.get('detections') or []
+        bgr = entry['bgr']
+        merged = entry['detections'] + hazmat_detections
+
+        annotated = self._draw_annotated(bgr, merged)
+        self._publish_annotated_frame(annotated)
+        self._update_hazmat_alerts(annotated, merged)
+
+        for det in hazmat_detections:
+            self._process_detection(det)
 
     def _detect_hazmat_hsv(self, bgr: np.ndarray) -> List[dict]:
         """Fallback: detecta señales hazmat (diamante naranja) por color HSV + forma."""
@@ -786,12 +848,16 @@ class ObjectDetector(Node):
         }
         self._detections.append(record)
 
-        # Publicar para geotiff_writer (formato JSON con wx/wy para el mapa 2D)
+        # Publicar para geotiff_writer + dashboard (formato JSON con wx/wy para
+        # el mapa 2D). camera_id explicito: el dashboard consume detecciones de
+        # front y astra por este MISMO topic y necesita saber cual la genero
+        # para no asumir siempre "front" al elegir el snapshot del popup.
         geo_msg = StringMsg()
         geo_msg.data = json.dumps({
             'type': det['type'],
             'name': det['name'],
             'wx': x, 'wy': y,
+            'camera_id': self._camera_id or 'front',
         })
         self._det_pub.publish(geo_msg)
 

@@ -6,18 +6,27 @@ vez (a diferencia de object_detector en modo 'local', que carga su propia
 copia por instancia) y sirve inferencia a cada cámara vía topics:
 
   /hazmat/submit/<camera_id>  (CompressedImage, publicado por cada
-                                object_detector con hazmat_mode='worker')
+                                object_detector con hazmat_mode='worker').
+                                header.frame_id lleva el token de identidad
+                                "camera_id#frame_seq" y header.stamp el
+                                timestamp de captura/origen del frame.
        -> hazmat_worker
-  /hazmat/result/<camera_id>  (std_msgs/String, JSON: lista de detecciones
-                                en el mismo formato que produce
-                                object_detector._detect_hazmat_yolo)
+  /hazmat/result/<camera_id>  (std_msgs/String, JSON: {camera_id, frame_seq,
+                                stamp_sec, stamp_nanosec, detections}) — SIEMPRE
+                                se publica, incluso con detections=[] vacio,
+                                para que el detector pueda invalidar cualquier
+                                confirmacion pendiente cuando el worker no
+                                encuentra nada.
 
 No toca ninguna captura de cámara ni el streaming: cada cámara sigue
 publicando con su propio OpenCV (logitech_pub) exactamente igual que antes;
 este nodo solo consume los frames que cada object_detector ya decodifica y
 le reenvía. Tampoco reemplaza el dibujo/alertas/CSV/RViz — todo eso lo sigue
-haciendo cada object_detector con los resultados que recibe de aquí (ver
-_get_worker_hazmat_detections / _on_hazmat_result en object_detector.py).
+haciendo cada object_detector con los resultados que recibe de aquí, empatando
+cada resultado con el frame EXACTO que lo produjo por (camera_id, frame_seq)
+(ver _submit_frame_to_worker / _on_hazmat_result en object_detector.py). El
+worker no depende solo del nombre del topic para saber de que cámara es un
+frame: valida que el camera_id embebido en el token coincida con el topic.
 
 Scheduler de prioridad (todo configurable por parámetro):
   - Estado normal: round-robin — se infiere una cámara distinta cada tick.
@@ -63,11 +72,13 @@ from rescue_bringup.hazmat_common import run_hazmat_yolo
 
 class _CameraSlot:
     """Estado de una cámara dentro del scheduler. Sin cola: solo el frame
-    pendiente más reciente (se sobreescribe, nunca se acumulan viejos)."""
+    pendiente más reciente (se sobreescribe, nunca se acumulan viejos).
+    `pending_frame` es un dict {'bgr', 'seq', 'stamp'} — el token de
+    identidad viaja junto con los pixeles, no se separa en ningún momento."""
 
     def __init__(self, camera_id: str):
         self.camera_id = camera_id
-        self.pending_frame: Optional[np.ndarray] = None
+        self.pending_frame: Optional[dict] = None
         self.consecutive_hits = 0
         self.last_hit_time = 0.0
 
@@ -136,6 +147,16 @@ class HazmatWorker(Node):
 
     def _make_submit_callback(self, cam_id: str):
         def _callback(msg: CompressedImage) -> None:
+            # Token de identidad: "camera_id#seq" en frame_id. No se usa solo
+            # el topic (que ya aisla por camara) para saber de quien es este
+            # frame — se valida tambien el camera_id embebido en el mensaje.
+            token_cam_id, _, seq_str = (msg.header.frame_id or '').partition('#')
+            if token_cam_id != cam_id or not seq_str.isdigit():
+                self.get_logger().warn(
+                    f'Frame con token invalido en /hazmat/submit/{cam_id}: '
+                    f'frame_id="{msg.header.frame_id}" — descartado')
+                return
+
             try:
                 buf = np.frombuffer(msg.data, dtype=np.uint8)
                 bgr = cv2.imdecode(buf, cv2.IMREAD_COLOR)
@@ -143,7 +164,10 @@ class HazmatWorker(Node):
                 return
             if bgr is None:
                 return
-            self._slots[cam_id].pending_frame = bgr
+
+            self._slots[cam_id].pending_frame = {
+                'bgr': bgr, 'seq': int(seq_str), 'stamp': msg.header.stamp,
+            }
         return _callback
 
     # ─── Scheduler de prioridad ────────────────────────────────────────
@@ -175,8 +199,11 @@ class HazmatWorker(Node):
         if slot.pending_frame is None:
             return
 
-        bgr = slot.pending_frame
+        frame_entry = slot.pending_frame
         slot.pending_frame = None  # consumido — no se re-infiere el mismo frame
+        bgr = frame_entry['bgr']
+        seq = frame_entry['seq']
+        stamp = frame_entry['stamp']
 
         try:
             detections = run_hazmat_yolo(self._model, bgr, self._conf)
@@ -184,6 +211,8 @@ class HazmatWorker(Node):
             self.get_logger().debug(f'HAZMAT worker inferencia error ({cam_id}): {exc}')
             return
 
+        # Scheduler de prioridad: SIN CAMBIOS respecto a la version anterior —
+        # solo boostea/decae con base en si hubo deteccion, igual que antes.
         now = time.time()
         if detections:
             slot.consecutive_hits += 1
@@ -193,9 +222,20 @@ class HazmatWorker(Node):
                 self.get_logger().info(
                     f'[HAZMAT worker] prioridad -> "{cam_id}" '
                     f'(confirmado {slot.consecutive_hits} inferencias seguidas)')
-            self._result_pubs[cam_id].publish(StringMsg(data=json.dumps(detections)))
         else:
             slot.consecutive_hits = 0
+
+        # Publicar SIEMPRE (incluso detections=[] vacio) — el detector necesita
+        # el resultado vacio para invalidar correctamente una confirmacion
+        # pendiente; antes de esta correccion, un resultado vacio nunca se
+        # publicaba y una deteccion podia quedar "colgada" indefinidamente.
+        self._result_pubs[cam_id].publish(StringMsg(data=json.dumps({
+            'camera_id': cam_id,
+            'frame_seq': seq,
+            'stamp_sec': stamp.sec,
+            'stamp_nanosec': stamp.nanosec,
+            'detections': detections,
+        })))
 
         self._maybe_release_priority(now)
 

@@ -431,9 +431,17 @@ class DashboardRosNode(Node):
             now = self.now_seconds()
             if now - self._shown_detection_keys.get(key, 0.0) > self._detection_popup_cooldown:
                 self._shown_detection_keys[key] = now
-                snap = (self.latest_front_annotated_frame
-                        if self.latest_front_annotated_frame is not None
-                        else self.latest_front_frame)
+                # camera_id explicito en el mensaje — nunca asumir 'front'.
+                # Front y astra mantienen snapshots separados; el fallback a
+                # front solo aplica si el campo llega ausente (compatibilidad).
+                if det.get('camera_id') == 'astra':
+                    snap = (self.latest_astra_annotated_frame
+                            if self.latest_astra_annotated_frame is not None
+                            else self.latest_astra_color_frame)
+                else:
+                    snap = (self.latest_front_annotated_frame
+                            if self.latest_front_annotated_frame is not None
+                            else self.latest_front_frame)
                 self._popup_queue.append({
                     'kind': 'detection',
                     'det': det,
