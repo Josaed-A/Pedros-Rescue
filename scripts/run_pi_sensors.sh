@@ -57,7 +57,7 @@ fi
 # ── Verificar imagen ──────────────────────────────────────────────
 if ! podman image exists "$IMAGE"; then
     echo "━━━ Imagen no encontrada. Construyendo (primera vez ~10 min)... ━━━"
-    podman build -t "$IMAGE" -f "$WORKSPACE/Dockerfile.pi" "$WORKSPACE"
+    podman build -t "$IMAGE" -f "$WORKSPACE/setup/Dockerfile.pi" "$WORKSPACE"
     echo "━━━ Imagen construida ✅ ━━━"
 fi
 

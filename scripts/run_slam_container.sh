@@ -91,13 +91,13 @@ done
 # ── Construir imagen si no existe o si se pide rebuild ───────────
 if [ "$1" = "rebuild-pi" ]; then
     echo "━━━ Construyendo imagen Pi (sin RViz/YOLO, ~8 min) ━━━"
-    podman build -t "$IMAGE" -f "$WORKSPACE/Dockerfile.pi" "$WORKSPACE"
+    podman build -t "$IMAGE" -f "$WORKSPACE/setup/Dockerfile.pi" "$WORKSPACE"
     echo "━━━ Imagen Pi construida ✅ ━━━"
     exit 0
 fi
 if ! podman image exists "$IMAGE" || [ "$1" = "rebuild" ]; then
     echo "━━━ Construyendo imagen Docker (primera vez, ~5 min) ━━━"
-    podman build -t "$IMAGE" "$WORKSPACE"
+    podman build -t "$IMAGE" -f "$WORKSPACE/setup/Dockerfile" "$WORKSPACE"
     echo "━━━ Imagen construida ✅ ━━━"
 fi
 

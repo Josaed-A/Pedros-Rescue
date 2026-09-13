@@ -12,6 +12,8 @@ def generate_launch_description():
     point_cloud_topic = LaunchConfiguration('point_cloud_topic')
     joy_autorepeat_rate = LaunchConfiguration('joy_autorepeat_rate')
     joy_deadzone = LaunchConfiguration('joy_deadzone')
+    joy_dev = LaunchConfiguration('joy_dev')
+    joy_device_name_contains = LaunchConfiguration('joy_device_name_contains')
     cmd_publish_rate_hz = LaunchConfiguration('cmd_publish_rate_hz')
     joy_timeout_seconds = LaunchConfiguration('joy_timeout_seconds')
 
@@ -38,7 +40,17 @@ def generate_launch_description():
         ),
         DeclareLaunchArgument(
             'joy_deadzone',
-            default_value='0.05',
+            default_value='0.12',
+        ),
+        DeclareLaunchArgument(
+            'joy_dev',
+            default_value='auto',
+            description='Joystick Linux: auto o una ruta como /dev/input/js0',
+        ),
+        DeclareLaunchArgument(
+            'joy_device_name_contains',
+            default_value='Elite 2',
+            description='Texto usado para elegir el mando cuando joy_dev:=auto',
         ),
         DeclareLaunchArgument(
             'cmd_publish_rate_hz',
@@ -56,12 +68,14 @@ def generate_launch_description():
             parameters=[{
                 'autorepeat_rate': ParameterValue(joy_autorepeat_rate, value_type=float),
                 'deadzone': ParameterValue(joy_deadzone, value_type=float),
+                'dev': joy_dev,
+                'device_name_contains': joy_device_name_contains,
             }],
         ),
         Node(
             package='rescue_command_station',
-            executable='ps4_teleop_node',
-            name='ps4_teleop_node',
+            executable='xbox_teleop_node',
+            name='xbox_teleop_node',
             output='screen',
             parameters=[{
                 'cmd_publish_rate_hz': ParameterValue(cmd_publish_rate_hz, value_type=float),

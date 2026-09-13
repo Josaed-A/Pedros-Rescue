@@ -33,6 +33,7 @@ import datetime
 import json
 import math
 import os
+import threading
 import time
 from collections import OrderedDict
 from typing import Dict, List, Optional, Tuple
@@ -103,6 +104,17 @@ HAZMAT_V_LO = 100                    # brillo mínimo
 HAZMAT_AREA_MIN = 500                # área mínima en píxeles²
 
 
+def _package_model_path(filename: str) -> str:
+    """Ruta a un modelo dentro de share/rescue_bringup/models/. Si el paquete
+    no esta instalado (p.ej. import suelto en un test), cae al nombre pelado —
+    ultralytics lo resuelve/descarga igual."""
+    try:
+        from ament_index_python.packages import get_package_share_directory
+        return os.path.join(get_package_share_directory('rescue_bringup'), 'models', filename)
+    except Exception:
+        return filename
+
+
 class ObjectDetector(Node):
     """Detecta y localiza objetos RoboCup Rescue 2026 en 3D."""
 
@@ -115,7 +127,10 @@ class ObjectDetector(Node):
         self.declare_parameter('country',        'Colombia')
         self.declare_parameter('robot_name',     'Pedro')
         self.declare_parameter('mode',           'T')
-        self.declare_parameter('yolo_model',     'yolov8n.pt')
+        # Los modelos viven junto al paquete (share/rescue_bringup/models/):
+        # best.pt (hazmat, entrenado) y yolov8n.pt (preentrenado COCO). Si el
+        # preentrenado no esta, ultralytics lo descarga a esa misma ruta.
+        self.declare_parameter('yolo_model',     _package_model_path('yolov8n.pt'))
         self.declare_parameter('hazmat_model',   '')
         self.declare_parameter('hazmat_conf',    0.40)
         self.declare_parameter('enable_yolo',    True)
@@ -132,6 +147,26 @@ class ObjectDetector(Node):
         # resultado hazmat — evita dibujar un resultado sobre un frame que no
         # lo produjo. Ver _submit_frame_to_worker / _on_hazmat_result.
         self.declare_parameter('frame_buffer_maxlen', 12)
+        # Periodo del timer que envia frames al hazmat_worker — INDEPENDIENTE
+        # del ritmo de captura/streaming. Si el sistema anda corto de
+        # recursos, se baja este numero (menos envios a hazmat), nunca el FPS
+        # de la camara ni DETECT_INTERVAL (AprilTag/YOLO-objetos).
+        self.declare_parameter('hazmat_submit_period_sec', 0.5)
+        # El modelo no detecta en el 100% de los frames (parpadeo por angulo,
+        # confianza, blur). Para que el recuadro se vea continuo en vez de
+        # intermitente, se "sostiene" la ultima posicion conocida de cada
+        # deteccion (por tipo+nombre) hasta `detection_hold_sec` sin verse de
+        # nuevo — SOLO afecta el dibujo/publicacion del frame anotado. El CSV,
+        # los marcadores RViz y la confirmacion de alertas hazmat siguen
+        # usando unicamente detecciones reales de cada frame (sin cambios).
+        self.declare_parameter('detection_hold_sec', 1.5)
+        # Cada cuanto corren los detectores PESADOS (AprilTag/YOLO/hazmat local).
+        # NO limita el dibujo ni la publicacion del frame anotado: eso ocurre en
+        # cada frame de camara. Default = DETECT_INTERVAL historico (0.5s).
+        self.declare_parameter('detect_interval_sec', DETECT_INTERVAL)
+        # Resolucion de inferencia hazmat. El script standalone usa 416 (mas
+        # rapido); 640 es el default de ultralytics y el comportamiento previo.
+        self.declare_parameter('hazmat_imgsz', 640)
 
         # ── Configuración de topics (compatible con ambos drivers) ──
         # use_compressed=false → driver oficial astra_camera / orbbec_camera (raw Image)
@@ -203,6 +238,14 @@ class ObjectDetector(Node):
         self._alert_pixel_tol      = float(self.get_parameter('alert_pixel_tolerance').value)
         self._hazmat_track: Dict[str, dict] = {}   # nombre clase -> {count, cx, cy, last_seen}
         self._alert_last_saved: Dict[str, float] = {}  # nombre clase -> ultimo timestamp guardado
+
+        # ── Ritmo de los detectores pesados (el dibujo/publicacion va aparte) ──
+        self._detect_interval = float(self.get_parameter('detect_interval_sec').value)
+        self._hazmat_imgsz = int(self.get_parameter('hazmat_imgsz').value)
+
+        # ── Persistencia visual del recuadro (solo dibujo, ver _merge_with_held_detections) ──
+        self._detection_hold_sec = float(self.get_parameter('detection_hold_sec').value)
+        self._detection_hold: Dict[tuple, dict] = {}   # (tipo, nombre) -> {'det', 'last_seen'}
 
         alerts_dir_param = self.get_parameter('alerts_dir').value
         if alerts_dir_param:
@@ -317,15 +360,27 @@ class ObjectDetector(Node):
         # ── hazmat_mode='worker': reenviar frames al worker compartido y
         # escuchar sus resultados. Misma image_qos (BEST_EFFORT, depth=1) que
         # las cámaras — el worker solo necesita el frame más reciente.
+        #
+        # El envio real (encode JPEG + publish) NUNCA ocurre dentro del
+        # callback de la camara (_process_frame) — eso bloquearia/retrasaria
+        # el streaming primario (annotated) por cada frame. En su lugar,
+        # _process_frame solo deja el frame mas reciente en
+        # `_pending_hazmat_frame` (una simple referencia, costo ~0) y un
+        # timer independiente (`_hazmat_submit_tick`) lo consume a su propio
+        # ritmo. "Latest frame wins": si el timer no alcanzo a consumir el
+        # anterior, se sobreescribe — nunca se acumula backlog hacia hazmat.
+        self._pending_hazmat_frame: Optional[dict] = None
         if self._hazmat_mode == 'worker' and self.get_parameter('enable_hazmat').value:
             self._hazmat_submit_pub = self.create_publisher(
                 CompressedImage, f'/hazmat/submit/{self._camera_id}', image_qos)
             self.create_subscription(
                 StringMsg, f'/hazmat/result/{self._camera_id}',
                 self._on_hazmat_result, 5)
+            submit_period = float(self.get_parameter('hazmat_submit_period_sec').value)
+            self.create_timer(submit_period, self._hazmat_submit_tick)
             self.get_logger().info(
                 f'Hazmat en modo WORKER — camera_id={self._camera_id} '
-                f'(submit: /hazmat/submit/{self._camera_id}, '
+                f'(submit: /hazmat/submit/{self._camera_id} cada {submit_period}s, '
                 f'result: /hazmat/result/{self._camera_id})')
 
         if self._hazmat_mode == 'worker':
@@ -385,12 +440,12 @@ class ObjectDetector(Node):
             pass
 
     def _on_color_compressed(self, msg: CompressedImage) -> None:
-        """Decodifica el color JPEG del astra_rgbd_camera_node del compañero y lo procesa."""
-        now = self.get_clock().now().nanoseconds * 1e-9
-        if now - self._last_detect_time < DETECT_INTERVAL:
-            return
-        self._last_detect_time = now
+        """Decodifica el color JPEG del astra_rgbd_camera_node del compañero y lo procesa.
 
+        SIN throttle aqui: cada frame que llega se dibuja y se publica, para que
+        el stream anotado salga al ritmo de la camara (igual de fluido que el
+        crudo). El throttle sigue existiendo pero ya solo limita los DETECTORES
+        pesados, dentro de _process_frame."""
         try:
             buf = np.frombuffer(msg.data, dtype=np.uint8)
             bgr = cv2.imdecode(buf, cv2.IMREAD_COLOR)
@@ -399,56 +454,107 @@ class ObjectDetector(Node):
         if bgr is None:
             return
 
-        self._process_frame(bgr)
+        self._process_frame(bgr, msg.header.stamp)
 
     def _on_color(self, msg: Image) -> None:
-        now = self.get_clock().now().nanoseconds * 1e-9
-        if now - self._last_detect_time < DETECT_INTERVAL:
-            return
-        self._last_detect_time = now
-
         try:
             bgr = self._bridge.imgmsg_to_cv2(msg, 'bgr8')
         except Exception:
             return
 
-        self._process_frame(bgr)
+        self._process_frame(bgr, msg.header.stamp)
 
-    def _process_frame(self, bgr: np.ndarray) -> None:
-        """Corre los tres detectores sobre un frame BGR y despacha resultados.
+    def _process_frame(self, bgr: np.ndarray, source_stamp=None) -> None:
+        """Dibuja y publica SIEMPRE; corre los detectores pesados solo cada
+        `detect_interval_sec`.
+
+        Esta separacion es la que hace que el stream anotado salga al ritmo de
+        la camara (fluido, como el standalone con cv2.imshow) en vez de al
+        ritmo de la inferencia. En los ciclos "solo dibujo" se pintan los
+        recuadros sostenidos (`_merge_with_held_detections`), asi que el
+        recuadro sigue visible y estable entre inferencias.
 
         AprilTag y YOLO-objetos se calculan aqui mismo, de forma sincrona,
-        sobre `bgr` — sin cambios. En hazmat_mode='worker', el hazmat NO se
-        agrega a `detections` en este metodo: se reenvia el frame (ya con las
-        detecciones locales encontradas hasta el momento, para poder fusionarlas
-        despues) al worker compartido, y el resultado se dibuja/publica mas
-        tarde, de forma asincrona, sobre ESE MISMO frame exacto cuando llegue
-        (ver _submit_frame_to_worker / _on_hazmat_result). Asi nunca se pinta
-        un resultado hazmat viejo sobre el frame actual.
+        en los ciclos de deteccion. En hazmat_mode='worker' el hazmat NO se
+        agrega a `detections` ni se envia nada al worker aqui — solo se deja
+        la referencia mas reciente en `_pending_hazmat_frame`; un timer
+        independiente (_hazmat_submit_tick) hace el envio real, desacoplado
+        del ritmo de camara. El resultado se dibuja/publica mas tarde, de
+        forma asincrona, sobre ESE MISMO frame exacto cuando llegue (ver
+        _submit_frame_to_worker / _on_hazmat_result).
+
+        `source_stamp` es el header.stamp ORIGINAL del mensaje de camara (no
+        un timestamp generado aqui) — se conserva solo como metadato de
+        trazabilidad hacia el worker; la identidad primaria del frame sigue
+        siendo camera_id + frame_seq.
         """
         self._color_img = bgr
+        now = time.time()
+        run_detectors = (now - self._last_detect_time) >= self._detect_interval
         detections = []
 
-        if self._aruco_detector and self.get_parameter('enable_apriltag').value:
-            detections += self._detect_apriltags(bgr)
+        if run_detectors:
+            self._last_detect_time = now
 
-        if self._yolo and self.get_parameter('enable_yolo').value:
-            detections += self._detect_yolo(bgr)
+            if self._aruco_detector and self.get_parameter('enable_apriltag').value:
+                detections += self._detect_apriltags(bgr)
 
-        if self.get_parameter('enable_hazmat').value:
-            if self._hazmat_mode == 'worker':
-                self._submit_frame_to_worker(bgr, detections)
-            elif self._hazmat_yolo:
-                detections += self._detect_hazmat_yolo(bgr)
-            else:
-                detections += self._detect_hazmat_hsv(bgr)
+            if self._yolo and self.get_parameter('enable_yolo').value:
+                detections += self._detect_yolo(bgr)
 
-        annotated = self._draw_annotated(bgr, detections)
+            if self.get_parameter('enable_hazmat').value:
+                if self._hazmat_mode == 'worker':
+                    # NO se envia al worker aqui (eso implicaria encode JPEG +
+                    # publish dentro del callback de la camara). Solo se deja la
+                    # referencia mas reciente para que _hazmat_submit_tick la
+                    # consuma en su propio timer, de forma totalmente desacoplada
+                    # del streaming primario.
+                    self._pending_hazmat_frame = {
+                        'bgr': bgr, 'detections': list(detections), 'source_stamp': source_stamp,
+                    }
+                elif self._hazmat_yolo:
+                    detections += self._detect_hazmat_yolo(bgr)
+                else:
+                    detections += self._detect_hazmat_hsv(bgr)
+
+        # Dibujo/publicacion en TODOS los ciclos: detecciones de este ciclo (si
+        # las hubo) + las sostenidas. En un ciclo "solo dibujo", `detections`
+        # va vacio y solo se repintan las sostenidas que aun no expiran.
+        visual_detections = self._merge_with_held_detections(detections)
+        annotated = self._draw_annotated(bgr, visual_detections)
         self._publish_annotated_frame(annotated)
-        self._update_hazmat_alerts(annotated, detections)
 
+        # Alertas/CSV/RViz solo en ciclos de deteccion reales — nunca en los
+        # ciclos de solo-dibujo (si no, un ciclo vacio borraria las rachas de
+        # confirmacion pendientes y ensuciaria el registro).
+        if run_detectors:
+            self._update_hazmat_alerts(annotated, detections)
+            for det in detections:
+                self._process_detection(det)
+
+    def _merge_with_held_detections(self, detections: List[dict]) -> List[dict]:
+        """Suaviza el parpadeo del modelo: si una deteccion (por tipo+nombre)
+        no aparece en este ciclo pero se vio hace menos de `detection_hold_sec`,
+        se sigue dibujando en su ultima posicion conocida. Nunca genera
+        detecciones nuevas ni afecta CSV/RViz/alertas — es puramente visual.
+        Limitacion aceptada: no distingue dos instancias con el mismo
+        tipo+nombre (sin tracker real), solo sostiene una por clase."""
+        now = time.time()
+        seen_keys = set()
         for det in detections:
-            self._process_detection(det)
+            key = (det['type'], det['name'])
+            seen_keys.add(key)
+            self._detection_hold[key] = {'det': det, 'last_seen': now}
+
+        for key in list(self._detection_hold.keys()):
+            if now - self._detection_hold[key]['last_seen'] > self._detection_hold_sec:
+                del self._detection_hold[key]
+
+        merged = list(detections)
+        for key, entry in self._detection_hold.items():
+            if key not in seen_keys:
+                merged.append(entry['det'])
+        return merged
 
     # ─── Detectores ───────────────────────────────────────────────
 
@@ -487,7 +593,7 @@ class ObjectDetector(Node):
         """Detecta señales hazmat con el modelo YOLO entrenado (49 clases)."""
         conf = float(self.get_parameter('hazmat_conf').value)
         try:
-            return run_hazmat_yolo(self._hazmat_yolo, bgr, conf)
+            return run_hazmat_yolo(self._hazmat_yolo, bgr, conf, self._hazmat_imgsz)
         except Exception as exc:
             self.get_logger().debug(f'Hazmat YOLO error: {exc}')
             return []
@@ -501,12 +607,30 @@ class ObjectDetector(Node):
     # camara) como unica fuente de verdad: camera_id tambien viaja dentro del
     # mensaje y se valida al recibir el resultado.
 
-    def _submit_frame_to_worker(self, bgr: np.ndarray, local_detections: list) -> None:
+    def _hazmat_submit_tick(self) -> None:
+        """Timer independiente del streaming: consume `_pending_hazmat_frame`
+        (el frame mas reciente dejado por _process_frame) y recien AQUI hace
+        el trabajo costoso de hazmat (encode JPEG + publish). "Latest frame
+        wins": si no llego nada nuevo desde el ultimo tick, no hay nada que
+        hacer — nunca se reenvia el mismo frame dos veces ni se acumula
+        backlog. Si el sistema anda corto de recursos, `hazmat_submit_period_sec`
+        es el parametro a subir — nunca el FPS de camara ni DETECT_INTERVAL."""
+        entry = self._pending_hazmat_frame
+        if entry is None:
+            return
+        self._pending_hazmat_frame = None  # consumido — no se reenvia de nuevo
+        self._submit_frame_to_worker(entry['bgr'], entry['detections'], entry['source_stamp'])
+
+    def _submit_frame_to_worker(self, bgr: np.ndarray, local_detections: list,
+                                 source_stamp=None) -> None:
         """Reenvia el frame actual al hazmat_worker compartido y lo guarda en
         un buffer chico y acotado (FIFO) indexado por su numero de secuencia.
         `local_detections` (AprilTag/YOLO-objetos ya calculados para ESTE
         frame) se guarda junto al frame para poder fusionarlos con el
-        resultado hazmat cuando llegue, sin recalcular nada.
+        resultado hazmat cuando llegue, sin recalcular nada. `source_stamp`
+        es el header.stamp ORIGINAL de la camara (no se genera uno nuevo aqui
+        con self.get_clock().now()) — se conserva solo como metadato de
+        trazabilidad; la identidad primaria sigue siendo camera_id+frame_seq.
 
         El worker decide, segun su propio scheduler de prioridad, si/cuando
         infiere realmente este frame — aqui solo se publica (QoS depth=1
@@ -514,19 +638,31 @@ class ObjectDetector(Node):
         nunca se acumulan frames viejos en el transporte)."""
         if self._hazmat_submit_pub is None:
             return
+        if source_stamp is None:
+            source_stamp = self.get_clock().now().to_msg()
 
         self._frame_seq += 1
         seq = self._frame_seq
-        self._frame_buffer[seq] = {'bgr': bgr, 'detections': list(local_detections)}
+        self._frame_buffer[seq] = {
+            'bgr': bgr,
+            'detections': list(local_detections),
+            'source_stamp_sec': source_stamp.sec,
+            'source_stamp_nanosec': source_stamp.nanosec,
+        }
         while len(self._frame_buffer) > self._frame_buffer_maxlen:
             self._frame_buffer.popitem(last=False)  # descarta la entrada mas vieja
 
         try:
             _, buf = cv2.imencode('.jpg', bgr, [cv2.IMWRITE_JPEG_QUALITY, 80])
-        except Exception:
+        except Exception as exc:
+            # No se pudo enviar este frame al worker -> nunca llegara un
+            # resultado para el. Liberar la entrada YA en vez de dejarla
+            # colgada hasta que el FIFO la expulse por antiguedad.
+            self._frame_buffer.pop(seq, None)
+            self.get_logger().debug(f'No se pudo codificar frame seq={seq} para el worker: {exc}')
             return
         msg = CompressedImage()
-        msg.header.stamp = self.get_clock().now().to_msg()
+        msg.header.stamp = source_stamp
         msg.header.frame_id = f'{self._camera_id}#{seq}'
         msg.format = 'jpeg'
         msg.data = buf.tobytes()
@@ -566,8 +702,27 @@ class ObjectDetector(Node):
         bgr = entry['bgr']
         merged = entry['detections'] + hazmat_detections
 
+        # El timestamp original de captura viaja como metadato de trazabilidad
+        # (entry['source_stamp_*'], puesto en _submit_frame_to_worker) — NO se
+        # usa para el emparejamiento, que ya se resolvio arriba por
+        # camera_id + frame_seq.
+        self.get_logger().debug(
+            f'Resultado hazmat camera_id={result_camera_id} frame_seq={seq} '
+            f"capturado en t={entry['source_stamp_sec']}."
+            f"{entry['source_stamp_nanosec']:09d}s")
+
+        # El frame anotado del stream en vivo NO se publica desde aqui: este
+        # frame ya es viejo (es el que se envio al worker hace varios ciclos) y
+        # republicarlo insertaria un salto hacia atras en un stream que
+        # _process_frame ya publica fluido, al ritmo de la camara. En su lugar
+        # se registran las detecciones en la cache de sostenidos, para que
+        # aparezcan sobre el PROXIMO frame en vivo — actual y sin saltos.
+        self._merge_with_held_detections(merged)
+
+        # La evidencia en disco SI usa el frame exacto que produjo la deteccion
+        # (ese es todo el punto del emparejamiento por camera_id + frame_seq):
+        # se dibuja aparte, sin publicarlo al stream.
         annotated = self._draw_annotated(bgr, merged)
-        self._publish_annotated_frame(annotated)
         self._update_hazmat_alerts(annotated, merged)
 
         for det in hazmat_detections:
@@ -729,21 +884,37 @@ class ObjectDetector(Node):
 
         img_path = os.path.join(self._alerts_dir, base + '.jpg')
         json_path = os.path.join(self._alerts_dir, base + '.json')
+        payload = {
+            'timestamp':  ts.isoformat(timespec='milliseconds'),
+            'camera_id':  self._camera_id or 'default',
+            'type':       det['type'],
+            'name':       det['name'],
+            'confidence': round(det.get('conf', 0.0), 4),
+            'bbox_px':    [det.get('x1'), det.get('y1'), det.get('x2'), det.get('y2')],
+            'image_file': os.path.basename(img_path),
+        }
+
+        self.get_logger().info(
+            f'[ALERTA HAZMAT] "{det["name"]}" confirmada '
+            f'(conf={det.get("conf", 0.0):.2f}) -> {img_path}')
+
+        # La escritura a disco (imwrite + json.dump) NUNCA corre en el hilo
+        # del executor: es I/O de disco, potencialmente lenta/con jitter, y
+        # este callback (_on_hazmat_result) comparte hilo con el streaming.
+        # Se dispara en un hilo aparte, fire-and-forget (sin join/wait) — una
+        # copia de `annotated` evita cualquier alias con el buffer principal.
+        threading.Thread(
+            target=self._write_alert_files,
+            args=(img_path, json_path, annotated.copy(), payload),
+            daemon=True,
+        ).start()
+
+    def _write_alert_files(self, img_path: str, json_path: str,
+                            annotated: np.ndarray, payload: dict) -> None:
         try:
             cv2.imwrite(img_path, annotated)
             with open(json_path, 'w') as f:
-                json.dump({
-                    'timestamp':  ts.isoformat(timespec='milliseconds'),
-                    'camera_id':  self._camera_id or 'default',
-                    'type':       det['type'],
-                    'name':       det['name'],
-                    'confidence': round(det.get('conf', 0.0), 4),
-                    'bbox_px':    [det.get('x1'), det.get('y1'), det.get('x2'), det.get('y2')],
-                    'image_file': os.path.basename(img_path),
-                }, f, indent=2)
-            self.get_logger().info(
-                f'[ALERTA HAZMAT] "{det["name"]}" confirmada '
-                f'(conf={det.get("conf", 0.0):.2f}) -> {img_path}')
+                json.dump(payload, f, indent=2)
         except OSError as exc:
             self.get_logger().warn(f'No se pudo guardar la alerta hazmat: {exc}')
 

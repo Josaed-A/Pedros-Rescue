@@ -9,12 +9,17 @@ dos copias de este bucle sincronizadas.
 from typing import List
 
 
-def run_hazmat_yolo(model, bgr, conf: float) -> List[dict]:
+def run_hazmat_yolo(model, bgr, conf: float, imgsz: int = 640) -> List[dict]:
     """Corre el modelo YOLO hazmat sobre un frame BGR y arma la lista de
     detecciones en el formato que consume el resto del pipeline
-    (_draw_annotated, _process_detection, _update_hazmat_alerts)."""
+    (_draw_annotated, _process_detection, _update_hazmat_alerts).
+
+    `imgsz` es la resolucion de inferencia: 640 es el default de ultralytics
+    (comportamiento historico); 416 es lo que usa el script standalone
+    hazmat/training/test_hazmat_camera.py — mas rapido, mas detecciones por
+    segundo a igual CPU."""
     results_out = []
-    res = model(bgr, conf=conf, verbose=False)
+    res = model(bgr, conf=conf, imgsz=imgsz, verbose=False)
     for r in res:
         for box in r.boxes:
             cls_name = model.names[int(box.cls[0])]

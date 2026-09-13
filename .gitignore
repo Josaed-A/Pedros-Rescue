@@ -14,6 +14,10 @@ __pycache__/
 # Dataset de entrenamiento (>1GB, no va en git)
 datasets/
 
+# Clon externo de slam_toolbox (repo propio con su .git). Se necesita para
+# compilar; ver README > Requisitos. No se versiona dentro de este repo.
+src/slam_toolbox/
+
 # Checkpoints y resultados de entrenamiento
 hazmat/training/runs/
 
@@ -22,11 +26,12 @@ hazmat/training/runs/
 hazmat/alertas_detectadas/*
 !hazmat/alertas_detectadas/.gitkeep
 
-# Modelos base descargados automáticamente por ultralytics
+# Modelos base preentrenados: ultralytics los descarga solo a
+# src/rescue_bringup/models/, no hace falta versionarlos (~6 MB c/u).
 yolov8n.pt
 yolov8s.pt
 yolov8m.pt
 
-# El modelo entrenado final SÍ va en git (src/rescue_bringup/models/best.pt)
-# para no ignorarlo accidentalmente:
-!src/rescue_bringup/models/
+# El modelo hazmat entrenado SÍ va en git (src/rescue_bringup/models/best.pt);
+# esta negacion evita que una regla de arriba lo ignore por accidente:
+!src/rescue_bringup/models/best.pt

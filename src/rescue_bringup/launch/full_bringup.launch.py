@@ -14,14 +14,14 @@ Sistema completo de Pedro's Rescue:
     └── [joy_node]         (/dev/input/jsX → /joy)
 
   PC — control:
-    ├── joy_node           (PS4 → /joy)
-    └── ps4_teleop_node    (/joy → /cmd_vel)
+    ├── joy_node           (Xbox Elite 2 → /joy)
+    └── xbox_teleop_node   (/joy → /cmd_vel)
 
 Uso rápido:
   # Terminal 1 (PC) – SLAM + lidar + visualización
   ros2 launch rescue_bringup full_bringup.launch.py
 
-  # Terminal 2 (PC) – Teleop PS4
+  # Terminal 2 (PC) – Teleop Xbox
   ros2 launch rescue_bringup full_bringup.launch.py teleop:=true
 
   # Guardar mapa cuando termines:
@@ -62,20 +62,24 @@ def generate_launch_description():
         }.items(),
     )
 
-    # ── 2. Teleop PS4 (opcional, solo si teleop:=true) ────────────
+    # ── 2. Teleop Xbox (opcional, solo si teleop:=true) ───────────
     joy_node = Node(
         package='joy',
         executable='joy_node',
         name='joy_node',
         output='screen',
-        parameters=[{'use_sim_time': use_sim_time}],
+        parameters=[{
+            'use_sim_time': use_sim_time,
+            'dev': 'auto',
+            'device_name_contains': 'Elite 2',
+        }],
         condition=IfCondition(teleop),
     )
 
-    ps4_node = Node(
+    xbox_node = Node(
         package='rescue_command_station',
-        executable='ps4_teleop_node',
-        name='ps4_teleop_node',
+        executable='xbox_teleop_node',
+        name='xbox_teleop_node',
         output='screen',
         parameters=[{'use_sim_time': use_sim_time}],
         condition=IfCondition(teleop),
@@ -103,10 +107,10 @@ def generate_launch_description():
         DeclareLaunchArgument(
             'teleop',
             default_value='false',
-            description='Activar teleop PS4 en este PC (true/false)',
+            description='Activar teleop Xbox en este PC (true/false)',
         ),
         slam_launch,
         joy_node,
-        ps4_node,
+        xbox_node,
         dashboard_node,
     ])

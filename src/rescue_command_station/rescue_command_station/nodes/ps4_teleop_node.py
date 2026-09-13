@@ -8,17 +8,17 @@ from std_msgs.msg import Bool, Float32, String
 
 from rescue_command_station.control.gearbox import Gearbox
 from rescue_command_station.control.tank_drive import TankDriveMixer
-from rescue_command_station.input.ps4_controller import PS4ControllerMapper
+from rescue_command_station.input.xbox_controller import XboxControllerMapper
 
 
-class PS4TeleopNode(Node):
+class XboxTeleopNode(Node):
     def __init__(self):
-        super().__init__('ps4_teleop_node')
+        super().__init__('xbox_teleop_node')
 
         self.declare_parameter('cmd_publish_rate_hz', 20.0)
         self.declare_parameter('joy_timeout_seconds', 0.7)
 
-        self.controller_mapper = PS4ControllerMapper()
+        self.controller_mapper = XboxControllerMapper()
         self.gearbox = Gearbox()
         self.drive_mixer = TankDriveMixer()
 
@@ -50,9 +50,9 @@ class PS4TeleopNode(Node):
         self.create_timer(cmd_period, self.publish_cmd_heartbeat)
         self.create_timer(0.2, self.publish_periodic_status)
 
-        self.get_logger().info('Estacion de mando iniciada.')
-        self.get_logger().info('Joystick izquierdo: control tipo tanque.')
-        self.get_logger().info('R1 sube caja, L1 baja caja.')
+        self.get_logger().info('Teleoperacion Xbox Elite Series 2 iniciada.')
+        self.get_logger().info('Stick izquierdo: control tipo tanque.')
+        self.get_logger().info('RB sube marcha, LB baja marcha.')
         self.get_logger().info(f'Heartbeat /cmd_vel: {self.cmd_publish_rate_hz:.1f} Hz')
 
     def real_speed_callback(self, msg):
@@ -208,7 +208,7 @@ class PS4TeleopNode(Node):
 
 def main(args=None):
     rclpy.init(args=args)
-    node = PS4TeleopNode()
+    node = XboxTeleopNode()
 
     try:
         rclpy.spin(node)
@@ -222,3 +222,7 @@ def main(args=None):
     finally:
         if rclpy.ok():
             rclpy.shutdown()
+
+
+# Compatibility for code importing the previous class name.
+PS4TeleopNode = XboxTeleopNode

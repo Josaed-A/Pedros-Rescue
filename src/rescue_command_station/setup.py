@@ -24,6 +24,7 @@ setup(
     license='Apache-2.0',
     entry_points={
         'console_scripts': [
+            'xbox_teleop_node = rescue_command_station.nodes.ps4_teleop_node:main',
             'ps4_teleop_node = rescue_command_station.nodes.ps4_teleop_node:main',
             'dashboard_node = rescue_command_station.nodes.dashboard_node:main',
             'rgbd_viewer_node = rescue_command_station.nodes.rgbd_viewer_node:main',

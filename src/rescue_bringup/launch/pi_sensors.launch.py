@@ -7,8 +7,7 @@ El SLAM corre en el PC y recibe los topics via DDS.
 Lanza:
   1. robot_description   → TF tree (URDF)
   2. ldlidar_node        → /ldlidar_node/scan
-  3. astra_camera_node   → /camera/depth/points
-                           /camera/color/image_raw
+  3. astra_rgbd_camera_node → /robot/camera/astra/color/image_raw/compressed
   4. logitech_pub        → /robot/camera/front/image_raw/compressed
   5. object_detector     → detección on-site (en la Pi) sobre la Logitech
                            /object_detections  /camera/color/image_annotated/compressed
@@ -61,30 +60,19 @@ def generate_launch_description():
         condition=IfCondition(launch_lidar),
     )
 
-    # ── 3. Orbbec Astra Pro (depth + color + point cloud) ──────────
+    # ── 3. Orbbec Astra Pro (color + point cloud) ──────────────────
+    # Driver propio (rescue_robot_core.astra_rgbd_camera_node): captura RGB
+    # V4L2 directo (por-id, ver resolve_video_index) y publica CompressedImage
+    # ya en /robot/camera/astra/... — sin depender de astra_camera (paquete
+    # oficial no instalado en la Pi) ni de un relay separado.
     camera_launch = TimerAction(
         period=3.0,
         actions=[
-            IncludeLaunchDescription(
-                PythonLaunchDescriptionSource(
-                    os.path.join(pkg_bringup, 'launch', 'camera.launch.py')
-                ),
-                launch_arguments={'driver': 'astra'}.items(),
-                condition=IfCondition(launch_camera),
-            )
-        ],
-    )
-
-    # ── 3b. Relay Astra color → CompressedImage en /robot/camera/astra/ ──
-    astra_republish = TimerAction(
-        period=5.0,
-        actions=[
             Node(
-                package='rescue_bringup',
-                executable='astra_relay',
-                name='astra_color_relay',
+                package='rescue_robot_core',
+                executable='astra_rgbd_camera_node',
+                name='astra_rgbd_camera_node',
                 output='screen',
-                parameters=[{'jpeg_quality': 70}],
                 condition=IfCondition(launch_camera),
             )
         ],
@@ -164,7 +152,6 @@ def generate_launch_description():
         robot_description_launch,
         lidar_launch,
         camera_launch,
-        astra_republish,
         logitech_launch,
         servos_launch,
     ])

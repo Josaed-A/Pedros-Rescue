@@ -4,7 +4,7 @@ High-level command station bringup for the PC.
 Runs the PC side in one launch:
   - ROS 2 network environment for CycloneDDS.
   - SLAM and RViz, consuming lidar/camera topics from the Pi.
-  - Dashboard, joy_node, and PS4 teleop.
+  - Dashboard, joy_node, and Xbox Elite Series 2 teleop.
 
 Usage:
   ros2 launch rescue_bringup pedro_pc.launch.py
@@ -133,6 +133,10 @@ def generate_launch_description():
             os.path.join(pkg_station, 'launch', 'command_station.launch.py')
         ),
         condition=IfCondition(launch_dashboard),
+        launch_arguments={
+            'joy_dev': LaunchConfiguration('joy_dev'),
+            'joy_device_name_contains': LaunchConfiguration('joy_device_name_contains'),
+        }.items(),
     )
 
     return LaunchDescription([
@@ -148,6 +152,15 @@ def generate_launch_description():
         DeclareLaunchArgument('launch_rviz', default_value='true'),
         DeclareLaunchArgument('launch_dashboard', default_value='true'),
         DeclareLaunchArgument('launch_detector', default_value='false'),
+        DeclareLaunchArgument(
+            'joy_dev',
+            default_value='auto',
+            description='Joystick Linux: auto o una ruta como /dev/input/js0',
+        ),
+        DeclareLaunchArgument(
+            'joy_device_name_contains',
+            default_value='Elite 2',
+        ),
         DeclareLaunchArgument('hazmat_model', default_value=''),
         DeclareLaunchArgument(
             'output_dir',

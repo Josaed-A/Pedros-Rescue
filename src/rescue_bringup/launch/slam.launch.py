@@ -271,7 +271,6 @@ def generate_launch_description():
                     'mission':       'M1',
                     'robot_name':    'Pedro',
                     'mode':          'T',
-                    'yolo_model':    'yolov8n.pt',
                     'hazmat_model':  hazmat_model_path,
                     'hazmat_conf':   0.40,
                     'enable_yolo':   True,

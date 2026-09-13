@@ -94,18 +94,34 @@ def generate_launch_description():
     pkg_bringup = get_package_share_directory('rescue_bringup')
     default_hazmat_model = os.path.join(pkg_bringup, 'models', 'best.pt')
     default_alerts_dir = _find_alerts_dir(__file__)
+    # Captura automatica de alertas SUSPENDIDA por ahora — no se elimina la
+    # funcion (object_detector.py sigue soportandola tal cual), solo queda
+    # apagada por defecto (alerts_dir vacio = _alerts_dir queda None, ver
+    # object_detector.py __init__). Para reactivarla puntualmente:
+    #   ros2 launch rescue_bringup test_local_cameras.launch.py alerts_dir:=/ruta
+    # (o alerts_dir:=<default_alerts_dir> para volver a hazmat/alertas_detectadas/).
 
     general_webcam_device = LaunchConfiguration('general_webcam_device', default='2')
     local_camera_device   = LaunchConfiguration('local_camera_device',   default='0')
     hazmat_model          = LaunchConfiguration('hazmat_model',          default=default_hazmat_model)
     enable_yolo           = LaunchConfiguration('enable_yolo',           default='true')
-    alerts_dir            = LaunchConfiguration('alerts_dir',            default=default_alerts_dir)
+    enable_apriltag       = LaunchConfiguration('enable_apriltag',       default='true')
+    alerts_dir            = LaunchConfiguration('alerts_dir',            default='')
     alert_confirm_frames  = LaunchConfiguration('alert_confirm_frames',  default='3')
     alert_cooldown_sec    = LaunchConfiguration('alert_cooldown_sec',    default='20.0')
+
+    # ── Fluidez: igualar la sensacion del script standalone ──────────────
+    # El frame anotado se dibuja/publica en CADA frame de camara (~15 Hz); estos
+    # parametros solo controlan cada cuanto corre la inferencia por debajo.
+    detect_interval_sec      = LaunchConfiguration('detect_interval_sec',      default='0.2')
+    hazmat_submit_period_sec = LaunchConfiguration('hazmat_submit_period_sec', default='0.15')
+    hazmat_imgsz             = LaunchConfiguration('hazmat_imgsz',             default='416')
+    detection_hold_sec       = LaunchConfiguration('detection_hold_sec',       default='1.5')
 
     # Scheduler de prioridad del hazmat_worker compartido.
     priority_confirm_frames = LaunchConfiguration('priority_confirm_frames', default='2')
     priority_release_sec    = LaunchConfiguration('priority_release_sec',    default='8.0')
+    tick_period_sec         = LaunchConfiguration('tick_period_sec',         default='0.08')
 
     # ── GENERAL WEBCAM → sustituye la Logitech frontal ──────────────────
     general_webcam_pub = Node(
@@ -145,10 +161,9 @@ def generate_launch_description():
             'use_compressed':  True,
             'color_topic':     color_topic,
             'require_depth':   False,
-            'enable_apriltag': True,
+            'enable_apriltag': enable_apriltag,
             'enable_hazmat':   True,
             'enable_yolo':     enable_yolo,
-            'yolo_model':      'yolov8n.pt',
             # Hazmat corre en el hazmat_worker compartido, no aqui — esta
             # instancia no carga ningun modelo hazmat propio, solo reenvia
             # frames y recibe resultados (ver hazmat_worker mas abajo).
@@ -158,6 +173,9 @@ def generate_launch_description():
             'alerts_dir':            alerts_dir,
             'alert_confirm_frames':  alert_confirm_frames,
             'alert_cooldown_sec':    alert_cooldown_sec,
+            'detect_interval_sec':      detect_interval_sec,
+            'hazmat_submit_period_sec': hazmat_submit_period_sec,
+            'detection_hold_sec':       detection_hold_sec,
         }
 
     # ── object_detector sobre la GENERAL WEBCAM (frontal) ────────────────
@@ -211,6 +229,8 @@ def generate_launch_description():
                     'camera_ids':   ['front', 'astra'],
                     'hazmat_model': hazmat_model,
                     'hazmat_conf':  0.40,
+                    'hazmat_imgsz': hazmat_imgsz,
+                    'tick_period_sec':         tick_period_sec,
                     'priority_confirm_frames': priority_confirm_frames,
                     'priority_release_sec':    priority_release_sec,
                 }],
@@ -247,8 +267,23 @@ def generate_launch_description():
                               description='Ruta al modelo YOLO hazmat (.pt). Vacio = HSV fallback'),
         DeclareLaunchArgument('enable_yolo', default_value='true',
                               description='Habilitar YOLO COCO (objetos de mision)'),
-        DeclareLaunchArgument('alerts_dir', default_value=default_alerts_dir,
-                              description='Carpeta base para capturas automaticas hazmat (subcarpeta por camara)'),
+        DeclareLaunchArgument('enable_apriltag', default_value='true',
+                              description='Habilitar deteccion de AprilTags'),
+        DeclareLaunchArgument('detect_interval_sec', default_value='0.2',
+                              description='Cada cuanto corren los detectores pesados (NO limita el stream anotado)'),
+        DeclareLaunchArgument('hazmat_submit_period_sec', default_value='0.15',
+                              description='Cada cuanto cada camara envia un frame al hazmat_worker'),
+        DeclareLaunchArgument('hazmat_imgsz', default_value='416',
+                              description='Resolucion de inferencia hazmat (416 = como el script standalone)'),
+        DeclareLaunchArgument('detection_hold_sec', default_value='1.5',
+                              description='Cuanto se sostiene el recuadro tras dejar de detectarse'),
+        DeclareLaunchArgument('tick_period_sec', default_value='0.08',
+                              description='Periodo del scheduler del hazmat_worker'),
+        DeclareLaunchArgument('alerts_dir', default_value='',
+                              description='Carpeta base para capturas automaticas hazmat '
+                                          '(subcarpeta por camara). SUSPENDIDA por defecto '
+                                          f'(vacio = deshabilitada); pasar "{default_alerts_dir}" '
+                                          'para reactivarla'),
         DeclareLaunchArgument('alert_confirm_frames', default_value='3',
                               description='Frames consecutivos que una señal debe sostenerse antes de capturarla'),
         DeclareLaunchArgument('alert_cooldown_sec', default_value='20.0',

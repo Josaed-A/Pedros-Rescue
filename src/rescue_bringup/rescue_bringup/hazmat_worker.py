@@ -90,6 +90,9 @@ class HazmatWorker(Node):
         self.declare_parameter('camera_ids', ['front', 'astra'])
         self.declare_parameter('hazmat_model', '')
         self.declare_parameter('hazmat_conf', 0.40)
+        # Resolucion de inferencia: 416 = lo que usa el script standalone
+        # (mas rapido, mas detecciones/seg); 640 = default de ultralytics.
+        self.declare_parameter('hazmat_imgsz', 640)
         self.declare_parameter('tick_period_sec', 0.15)
         self.declare_parameter('demoted_period_ticks', 4)
         self.declare_parameter('priority_confirm_frames', 2)
@@ -105,6 +108,7 @@ class HazmatWorker(Node):
         camera_ids = [str(c) for c in self.get_parameter('camera_ids').value]
         model_path = self.get_parameter('hazmat_model').value
         self._conf = float(self.get_parameter('hazmat_conf').value)
+        self._imgsz = int(self.get_parameter('hazmat_imgsz').value)
         self._demoted_period = max(1, int(self.get_parameter('demoted_period_ticks').value))
         self._confirm_frames = max(1, int(self.get_parameter('priority_confirm_frames').value))
         self._release_sec = float(self.get_parameter('priority_release_sec').value)
@@ -206,10 +210,16 @@ class HazmatWorker(Node):
         stamp = frame_entry['stamp']
 
         try:
-            detections = run_hazmat_yolo(self._model, bgr, self._conf)
+            detections = run_hazmat_yolo(self._model, bgr, self._conf, self._imgsz)
         except Exception as exc:
+            # No perder este frame en silencio: si no publicamos nada, la
+            # entrada de este seq queda "colgada" en el buffer del detector
+            # hasta que el FIFO la expulse por antiguedad. Se publica un
+            # resultado vacio para que el detector la libere de inmediato
+            # (mismo tratamiento que "sin detecciones", sin logica especial
+            # de reintento/recuperacion).
             self.get_logger().debug(f'HAZMAT worker inferencia error ({cam_id}): {exc}')
-            return
+            detections = []
 
         # Scheduler de prioridad: SIN CAMBIOS respecto a la version anterior —
         # solo boostea/decae con base en si hubo deteccion, igual que antes.

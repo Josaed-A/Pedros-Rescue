@@ -48,9 +48,15 @@ src/
     config/arm.yaml + launch/  (command_station.launch.py, arm_station.launch.py)
 
   rescue_bringup/                 # launch + nodos pegamento
+    models/                       # best.pt (hazmat) + yolov8n.pt (COCO)
   rescue_robot_description/       # URDF
 
   dependencias/                   # terceros: cv_bridge, joy
+  slam_toolbox/                   # clon externo (no versionado aquí)
+
+hazmat/        # detección de señales: modelos, entrenamiento, alertas  → hazmat/README.md
+scripts/       # utilidades de red, arranque y contenedores
+setup/         # requisitos pip/apt, reglas udev, Dockerfiles
 ```
 
 ## Flujo de control (conducción)
@@ -131,19 +137,22 @@ GENERAL WEBCAM (/dev/video2) -> logitech_pub -> /robot/camera/front/image_raw/co
 Pi** (`pedro_pi.launch.py` → `pi_sensors.launch.py` → `logitech_vision.launch.py`),
 usando `best.pt` por defecto. El dashboard muestra el frame ya anotado (cajas +
 etiquetas) en el panel "Camara frontal"; el panel "Astra color" muestra el feed
-crudo salvo que algo publique en `astra_annotated_topic` (solo pasa en la
-prueba local de dos cámaras, ver abajo — en el robot real la Astra no corre
-detección). Ver [COMO_EJECUTAR.md](COMO_EJECUTAR.md#probar-la-deteccion-hazmat)
-para cómo probarlo en vivo, con o sin el resto del stack ROS.
+crudo salvo que algo publique en `astra_annotated_topic` (en el robot real la
+Astra no corre detección).
 
-Todo lo relacionado con hazmat (modelos, entrenamiento, prueba standalone con
-OpenCV y las capturas automáticas de alertas) está organizado en
-[hazmat/](hazmat/README.md). `object_detector` confirma una señal solo cuando
-se sostiene varios frames seguidos (evita capturar ruido de un parpadeo del
-modelo) y guarda automáticamente `hazmat/alertas_detectadas/<camara>/*.jpg`
-+ `.json` con clase, confianza y bbox — para que una persona revise la calidad
-de la detección. `test_local_cameras.launch.py` corre esto en **ambas**
-cámaras del PC a la vez (ver [COMO_EJECUTAR.md](COMO_EJECUTAR.md#alertas-hazmat-captura-automatica-para-revision-humana)).
+El frame anotado se dibuja y publica en **cada** frame de cámara (~15 Hz),
+independientemente de la inferencia: entre inferencias se repinta el último
+recuadro conocido, así el stream va tan fluido como el crudo y el recuadro no
+parpadea. Los detectores pesados corren a su propio ritmo por debajo.
+
+Los dos modelos del proyecto viven juntos en
+[`src/rescue_bringup/models/`](src/rescue_bringup/models/): `best.pt` (hazmat,
+versionado) y `yolov8n.pt` (preentrenado COCO, se descarga solo). Hay además un
+modo opcional `hazmat_mode=worker` que carga el modelo hazmat **una sola vez**
+en un nodo compartido para servir a varias cámaras.
+
+📖 **Documentación completa de detección — arquitectura, cómo probarla con y sin
+ROS, alertas automáticas y entrenamiento: [hazmat/README.md](hazmat/README.md).**
 
 ## Mando Xbox Elite Series 2
 
@@ -200,13 +209,17 @@ El PC detecta el mando como `Microsoft X-Box One Elite 2 pad` mediante el driver
 
 ## Requisitos
 
-- PC: [requirements_pc.txt](requirements_pc.txt) (incluye customtkinter, matplotlib para la GUI del brazo)
-- Raspberry: [requirements_raspberry.txt](requirements_raspberry.txt) (incluye dynamixel-sdk, pyserial)
-- Apt/ROS: [system_requirements_pc.txt](system_requirements_pc.txt), [system_requirements_raspberry.txt](system_requirements_raspberry.txt)
-- Reglas udev de hardware: [99-pedros-rescue.rules](99-pedros-rescue.rules)
+Todo lo de instalación está en [`setup/`](setup/):
+
+- PC: [setup/requirements_pc.txt](setup/requirements_pc.txt) (incluye customtkinter, matplotlib para la GUI del brazo, ultralytics)
+- Raspberry: [setup/requirements_raspberry.txt](setup/requirements_raspberry.txt) (incluye dynamixel-sdk, pyserial, ultralytics)
+- Apt/ROS: [setup/system_requirements_pc.txt](setup/system_requirements_pc.txt), [setup/system_requirements_raspberry.txt](setup/system_requirements_raspberry.txt)
+- Reglas udev de hardware: [setup/99-pedros-rescue.rules](setup/99-pedros-rescue.rules)
+- Contenedores: [setup/Dockerfile](setup/Dockerfile), [setup/Dockerfile.pi](setup/Dockerfile.pi)
 
 Dependencias ROS externas no incluidas en el árbol actual:
 
 - Lidar LD19: el launch `rescue_bringup lidar_ld19.launch.py` requiere que el paquete `ldlidar_component` esté instalado o clonado en `src/` antes de compilar.
+- `slam_toolbox`: se usa como clon en `src/slam_toolbox/` (repo externo con su propio `.git`, no versionado aquí). Clonarlo antes de compilar, o instalarlo con `ros-<distro>-slam-toolbox`.
 - Astra SDK oficial: solo es necesario si se usa `camera_driver:=astra_sdk`; el flujo por defecto usa `rescue_robot_core/astra_rgbd_camera_node`.
 - PC con ROS 2 Jazzy compilado desde fuente: usar `source scripts/ros_net_pc.sh`; ese script agrega las librerias vendor (`yaml_cpp_vendor`, `gz_math_vendor`, etc.) al `LD_LIBRARY_PATH` para que RViz cargue plugins correctamente.

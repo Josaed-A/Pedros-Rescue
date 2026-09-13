@@ -337,6 +337,9 @@ class GUINode(Node):
         self._qr_text = ''
         self._last_detection = ''
         self._last_qr_scan = 0.0
+        self._qr_popup_queue: list = []
+        self._shown_qr_keys: dict = {}
+        self._qr_popup_cooldown = 10.0   # s por código, igual que el dashboard
         sensor_qos = QoSProfile(
             reliability=QoSReliabilityPolicy.BEST_EFFORT,
             history=QoSHistoryPolicy.KEEP_LAST, depth=1)
@@ -389,6 +392,9 @@ class GUINode(Node):
                 frame, qr = self.qr_detector.detect_and_annotate(frame)
                 if qr:
                     self._qr_text = qr
+                    if now - self._shown_qr_keys.get(qr, 0.0) > self._qr_popup_cooldown:
+                        self._shown_qr_keys[qr] = now
+                        self._qr_popup_queue.append({'text': qr, 'frame': frame.copy()})
             with self._cam_lock:
                 self._cam_frame = frame
                 self._cam_version += 1
@@ -845,6 +851,7 @@ class App(ctk.CTk):
         self._drawn_pts_version = -1
 
         self._bus_reset_ticks    = 0       # ticks restantes del banner de reinicio de buses
+        self._popup_open         = False   # ventana modal de QR abierta
 
         # Jog manual por servo con el mando (pestana 'Jog')
         self._jog_inflight: set[int] = set()   # indices de joint con /..._jog en curso
@@ -983,6 +990,91 @@ class App(ctk.CTk):
                     self.cam_label.configure(image=self.cam_photo, text='')
         self.lbl_qr.configure(text=f'QR: {n._qr_text or "—"}')
         self.lbl_det.configure(text=f'Senal: {n._last_detection or "—"}')
+
+    # ── Popup modal de QR ───────────────────────────────────────────
+
+    def _check_qr_popup(self):
+        if self._popup_open or not self._node._qr_popup_queue:
+            return
+        self._popup_open = True
+        item = self._node._qr_popup_queue.pop(0)
+        self._show_qr_popup(item)
+
+    def _make_popup(self, title):
+        popup = ctk.CTkToplevel(self)
+        popup.title(title)
+        popup.resizable(False, False)
+        popup.transient(self)
+        popup.grab_set()
+        popup.focus_force()
+        return popup
+
+    def _center_popup(self, popup):
+        popup.update_idletasks()
+        sw = self.winfo_screenwidth()
+        sh = self.winfo_screenheight()
+        w = popup.winfo_reqwidth()
+        h = popup.winfo_reqheight()
+        popup.geometry(f'+{max(0, (sw - w) // 2)}+{max(0, (sh - h) // 2)}')
+
+    def _show_qr_popup(self, item):
+        text = item['text']
+        frame = item.get('frame')
+
+        popup = self._make_popup('QR Detectado')
+
+        ctk.CTkLabel(popup, text='▣  QR DETECTADO', fg_color='#1f538d',
+                     text_color='white', font=('Roboto', 16, 'bold'),
+                     corner_radius=0, height=44).pack(fill='x')
+
+        qr_image_photo = None
+        try:
+            if text.startswith('data:image/'):
+                import base64 as _base64
+                _, b64data = text.split(',', 1)
+                arr = np.frombuffer(_base64.b64decode(b64data), dtype=np.uint8)
+                import cv2 as _cv2
+                decoded_img = _cv2.imdecode(arr, _cv2.IMREAD_COLOR)
+                if decoded_img is not None:
+                    png_data = bgr_frame_to_png_data(decoded_img, max_width=420, max_height=300)
+                    if png_data:
+                        qr_image_photo = tk.PhotoImage(data=png_data, format='png')
+        except Exception:
+            pass
+
+        if qr_image_photo:
+            img_lbl = ctk.CTkLabel(popup, image=qr_image_photo, text='')
+            img_lbl.image = qr_image_photo
+            img_lbl.pack(pady=10)
+            ctk.CTkLabel(popup, text='Imagen decodificada del QR',
+                         text_color=COL['muted'], font=('Roboto', 9)).pack()
+        else:
+            ctk.CTkLabel(popup, text=text, font=('Roboto', 13),
+                         wraplength=520, justify='left').pack(padx=20, pady=(16, 0))
+
+        if frame is not None:
+            try:
+                png_data = bgr_frame_to_png_data(frame, max_width=420, max_height=260)
+                if png_data:
+                    photo = tk.PhotoImage(data=png_data, format='png')
+                    ctk.CTkLabel(popup, text='Imagen de la camara:',
+                                 text_color=COL['muted'], font=('Roboto', 9)).pack(pady=(10, 2))
+                    img_lbl2 = ctk.CTkLabel(popup, image=photo, text='')
+                    img_lbl2.image = photo
+                    img_lbl2.pack()
+            except Exception:
+                pass
+
+        def close():
+            self._popup_open = False
+            popup.grab_release()
+            popup.destroy()
+
+        popup.protocol('WM_DELETE_WINDOW', close)
+        ctk.CTkButton(popup, text='CERRAR  ✕', fg_color='#1f538d', hover_color='#163a5f',
+                      font=('Roboto', 14, 'bold'), command=close).pack(pady=(16, 20))
+
+        self._center_popup(popup)
 
     # ── Tab FK: sliders por articulacion ──────────────────────────
 
@@ -1162,8 +1254,8 @@ class App(ctk.CTk):
             return v if abs(v) > dz else 0.0
 
         def trig(i):
-            v = axes[i] if (axes and i < len(axes)) else 1.0
-            return max(0.0, (1.0 - v) / 2.0)
+            v = axes[i] if (axes and i < len(axes)) else cfg.TRIGGER_RELEASED_VALUE
+            return cfg.trigger_value(v)
 
         # L1/R1 -> Base: pasos discretos ya contados por el nodo (evita que
         # ademas ciclen de pestana mientras estamos en 'Jog').
@@ -1883,6 +1975,7 @@ class App(ctk.CTk):
 
         # ── Camara frontal + QR/senal (lado derecho, siempre visible) ──
         self._refresh_camera()
+        self._check_qr_popup()
 
         joint_order = self._node.joint_order
         ax_st = self._node.ax_status

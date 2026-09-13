@@ -91,6 +91,9 @@ class DashboardRosNode(Node):
         self.declare_parameter('astra_depth_topic',     '/robot/camera/astra/depth/image_raw/compressed')
         self.declare_parameter('point_cloud_topic',     '/robot/camera/astra/points')
         self.declare_parameter('raspberry_timeout_seconds', 2.5)
+        # Para pruebas de streaming puro (aislar si el QR aporta intermitencia).
+        # Default true: comportamiento de siempre, sin cambios en produccion.
+        self.declare_parameter('enable_qr', True)
 
         self.front_camera_topic    = self.get_parameter('front_camera_topic').value
         self.astra_color_topic     = self.get_parameter('astra_color_topic').value
@@ -100,6 +103,7 @@ class DashboardRosNode(Node):
         self.point_cloud_topic     = self.get_parameter('point_cloud_topic').value
         self.raspberry_timeout_seconds = float(
             self.get_parameter('raspberry_timeout_seconds').value)
+        self.enable_qr = bool(self.get_parameter('enable_qr').value)
 
         self.qr_detector = QrDetector()
 
@@ -366,7 +370,7 @@ class DashboardRosNode(Node):
             self.mark_raspberry_seen(self.front_camera_topic)
             frame = compressed_msg_to_numpy(msg)
             now = self.now_seconds()
-            if now - self.last_qr_scan_time >= self.qr_scan_interval:
+            if self.enable_qr and now - self.last_qr_scan_time >= self.qr_scan_interval:
                 self.last_qr_scan_time = now
                 frame, qr_text = self.qr_detector.detect_and_annotate(frame)
                 if qr_text:
