@@ -60,9 +60,25 @@ import os
 
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
-from launch.actions import DeclareLaunchArgument, TimerAction
+from launch.actions import DeclareLaunchArgument, SetEnvironmentVariable, TimerAction
 from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
+
+# Esta prueba es 100% local: todos los nodos corren en esta maquina. Por eso
+# NO debe heredar la configuracion DDS pensada para hablar con la Pi
+# (scripts/ros_net_pc.sh), que fija unicast sin multicast hacia peers remotos
+# concretos. Con esa config, si las IPs no coinciden con la red actual (o el
+# cable esta abajo), los nodos locales NO se descubren entre si: todo arranca,
+# el modelo carga, pero nunca llega un frame al detector y parece que "la
+# deteccion no se ejecuta". Se fuerza una config propia que solo habilita
+# multicast y deja que Cyclone elija la interfaz, para que el descubrimiento
+# local funcione siempre, con o sin red, sin importar que haya sourceado el
+# usuario antes.
+LOCAL_DDS_URI = (
+    '<CycloneDDS><Domain><General>'
+    '<AllowMulticast>true</AllowMulticast>'
+    '</General></Domain></CycloneDDS>'
+)
 
 FRONT_TOPIC = '/robot/camera/front/image_raw/compressed'
 ASTRA_COLOR_TOPIC = '/robot/camera/astra/color/image_raw/compressed'
@@ -292,6 +308,9 @@ def generate_launch_description():
                               description='Inferencias seguidas con deteccion para que una camara tome prioridad en el hazmat_worker'),
         DeclareLaunchArgument('priority_release_sec', default_value='8.0',
                               description='Segundos sin deteccion antes de que el hazmat_worker vuelva a prioridad normal'),
+        # Aislar el descubrimiento DDS de la config PC<->Pi (ver LOCAL_DDS_URI).
+        SetEnvironmentVariable('CYCLONEDDS_URI', LOCAL_DDS_URI),
+        SetEnvironmentVariable('ROS_DISCOVERY_SERVER', ''),
         general_webcam_pub,
         local_camera_pub,
         hazmat_worker,
