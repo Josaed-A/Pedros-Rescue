@@ -18,15 +18,10 @@ class LogitechPublisher(Node):
         self._fps  = self.get_parameter('fps').value
         self._qual = self.get_parameter('jpeg_quality').value
 
-        dev_index = dev if isinstance(dev, int) else int(dev)
-        self._cap = cv2.VideoCapture(dev_index, cv2.CAP_V4L2)
-        if not self._cap.isOpened():
-            self.get_logger().error(f'No se pudo abrir /dev/video{dev_index}')
-            return
-
-        self._cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
-        self._cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
-        self._cap.set(cv2.CAP_PROP_FPS, self._fps)
+        self._dev_index = dev if isinstance(dev, int) else int(dev)
+        self._topic = topic
+        self._cap = None
+        self._publish_timer = None
 
         qos = QoSProfile(
             history=QoSHistoryPolicy.KEEP_LAST,
@@ -34,10 +29,39 @@ class LogitechPublisher(Node):
             reliability=QoSReliabilityPolicy.BEST_EFFORT,
         )
         self._pub = self.create_publisher(CompressedImage, topic, qos)
-        self.create_timer(1.0 / self._fps, self._publish)
-        self.get_logger().info(f'Logitech publicando en {topic} a {self._fps} fps')
+
+        # Si la camara esta ocupada (otro launch sin cerrar, otro proceso) el
+        # nodo NO se queda mudo para siempre: reintenta hasta abrirla. Antes
+        # se rendia con un solo error, el nodo seguia vivo sin publicar y
+        # parecia que "la deteccion no arranco".
+        if not self._open_camera():
+            self._retry_timer = self.create_timer(2.0, self._retry_open)
+
+    def _open_camera(self) -> bool:
+        cap = cv2.VideoCapture(self._dev_index, cv2.CAP_V4L2)
+        if not cap.isOpened():
+            cap.release()
+            return False
+        cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
+        cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
+        cap.set(cv2.CAP_PROP_FPS, self._fps)
+        self._cap = cap
+        self._publish_timer = self.create_timer(1.0 / self._fps, self._publish)
+        self.get_logger().info(
+            f'Publicando /dev/video{self._dev_index} en {self._topic} a {self._fps} fps')
+        return True
+
+    def _retry_open(self) -> None:
+        if self._open_camera():
+            self._retry_timer.cancel()
+            return
+        self.get_logger().warn(
+            f'/dev/video{self._dev_index} ocupada o ausente — sin imagen, por lo tanto '
+            f'SIN DETECCION. Reintentando... (¿hay otro launch o script usando la camara?)')
 
     def _publish(self):
+        if self._cap is None:
+            return
         ok, frame = self._cap.read()
         if not ok:
             return
@@ -49,7 +73,7 @@ class LogitechPublisher(Node):
         self._pub.publish(msg)
 
     def destroy_node(self):
-        if self._cap.isOpened():
+        if self._cap is not None and self._cap.isOpened():
             self._cap.release()
         super().destroy_node()
 

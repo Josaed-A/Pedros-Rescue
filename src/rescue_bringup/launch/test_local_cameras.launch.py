@@ -86,6 +86,34 @@ FRONT_ANNOTATED_TOPIC = '/camera/color/image_annotated/compressed'
 ASTRA_ANNOTATED_TOPIC = '/camera/astra/image_annotated/compressed'
 
 
+def _resolve_camera(name_hint: str, fallback: str) -> str:
+    """Busca el indice /dev/videoN cuya camara se llame como `name_hint`.
+
+    Los indices no son estables: cambian al reconectar o reiniciar, y un
+    indice equivocado deja al detector sin imagen (= sin detecciones). Se
+    consulta el nombre real en /sys/class/video4linux/. Una misma camara
+    expone varios nodos (captura + metadata); se toma el menor, que es el de
+    captura. Si no hay coincidencia, se devuelve `fallback`.
+    """
+    try:
+        import glob
+        candidates = []
+        for dev in sorted(glob.glob('/sys/class/video4linux/video*')):
+            try:
+                with open(os.path.join(dev, 'name')) as f:
+                    cam_name = f.read().strip()
+            except OSError:
+                continue
+            if name_hint.lower() not in cam_name.lower():
+                continue
+            candidates.append(int(os.path.basename(dev).replace('video', '')))
+        if candidates:
+            return str(min(candidates))
+    except Exception:
+        pass
+    return fallback
+
+
 def _find_alerts_dir(launch_file: str) -> str:
     """
     Resuelve hazmat/alertas_detectadas junto al checkout del repo. Con
@@ -117,8 +145,12 @@ def generate_launch_description():
     #   ros2 launch rescue_bringup test_local_cameras.launch.py alerts_dir:=/ruta
     # (o alerts_dir:=<default_alerts_dir> para volver a hazmat/alertas_detectadas/).
 
-    general_webcam_device = LaunchConfiguration('general_webcam_device', default='2')
-    local_camera_device   = LaunchConfiguration('local_camera_device',   default='0')
+    # Autodeteccion por nombre; los defaults numericos quedan de respaldo.
+    _front_default = _resolve_camera('GENERAL WEBCAM', '2')
+    _astra_default = _resolve_camera('HP HD Camera',   '0')
+
+    general_webcam_device = LaunchConfiguration('general_webcam_device', default=_front_default)
+    local_camera_device   = LaunchConfiguration('local_camera_device',   default=_astra_default)
     hazmat_model          = LaunchConfiguration('hazmat_model',          default=default_hazmat_model)
     enable_yolo           = LaunchConfiguration('enable_yolo',           default='true')
     enable_apriltag       = LaunchConfiguration('enable_apriltag',       default='true')
@@ -275,10 +307,10 @@ def generate_launch_description():
     )
 
     return LaunchDescription([
-        DeclareLaunchArgument('general_webcam_device', default_value='2',
-                              description='Indice /dev/videoN de la GENERAL WEBCAM (sustituye a la Logitech)'),
-        DeclareLaunchArgument('local_camera_device', default_value='0',
-                              description='Indice /dev/videoN de la camara local (sustituye a la Astra, solo color)'),
+        DeclareLaunchArgument('general_webcam_device', default_value=_front_default,
+                              description='Indice /dev/videoN de la GENERAL WEBCAM (autodetectado por nombre)'),
+        DeclareLaunchArgument('local_camera_device', default_value=_astra_default,
+                              description='Indice /dev/videoN de la camara local (autodetectado por nombre)'),
         DeclareLaunchArgument('hazmat_model', default_value=default_hazmat_model,
                               description='Ruta al modelo YOLO hazmat (.pt). Vacio = HSV fallback'),
         DeclareLaunchArgument('enable_yolo', default_value='true',
