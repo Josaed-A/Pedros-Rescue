@@ -1,0 +1,10 @@
+# Resultados de mapeo: pesan MB y cambian en cada corrida
+*.db
+*.ply
+*.pcd
+
+# Build de colcon
+build/
+install/
+log/
+__pycache__/

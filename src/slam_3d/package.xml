@@ -1,0 +1,24 @@
+<?xml version="1.0"?>
+<?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
+<package format="3">
+  <name>slam_3d</name>
+  <version>0.1.0</version>
+  <description>SLAM 3D con Orbbec Astra Pro y RTAB-Map para Pedro's Rescue</description>
+
+  <maintainer email="semillero@unisabana.edu.co">SabanaHerons</maintainer>
+  <license>MIT</license>
+
+  <exec_depend>rtabmap_ros</exec_depend>
+  <exec_depend>rtabmap_launch</exec_depend>
+  <exec_depend>rtabmap_slam</exec_depend>
+  <exec_depend>rtabmap_odom</exec_depend>
+  <exec_depend>openni2_camera</exec_depend>
+  <exec_depend>v4l2_camera</exec_depend>
+  <exec_depend>tf2_ros</exec_depend>
+  <exec_depend>image_transport_plugins</exec_depend>
+  <exec_depend>rmw_cyclonedds_cpp</exec_depend>
+
+  <export>
+    <build_type>ament_python</build_type>
+  </export>
+</package>

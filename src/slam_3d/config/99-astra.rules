@@ -1,0 +1,20 @@
+# Orbbec Astra Pro -- permisos de acceso
+#
+# La Astra Pro se presenta como DOS dispositivos USB independientes:
+#   2bc5:0403  sensor de profundidad  -> solo habla OpenNI2 (libusb, sin driver de kernel)
+#   2bc5:0501  camara de color        -> UVC estandar, aparece como /dev/videoN
+#
+# Por defecto solo root puede abrirlos. Sin estas reglas OpenNI2 encuentra el
+# dispositivo pero falla con "Access denied (insufficient permissions)".
+#
+# Nota: es NORMAL que el sensor de profundidad aparezca con Driver=[none] en
+# `lsusb -t`. El kernel no tiene driver para el porque OpenNI2 le habla directo
+# por libusb desde espacio de usuario. No hay nada que arreglar ahi.
+#
+# Instalar:
+#   sudo cp 99-astra.rules /etc/udev/rules.d/
+#   sudo udevadm control --reload-rules && sudo udevadm trigger
+#   (desconectar y reconectar la camara)
+
+SUBSYSTEM=="usb", ATTRS{idVendor}=="2bc5", MODE="0666"
+SUBSYSTEM=="video4linux", ATTRS{idVendor}=="2bc5", MODE="0666"
