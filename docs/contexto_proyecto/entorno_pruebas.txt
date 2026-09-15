@@ -1,0 +1,10 @@
+Python 3.13.15
+Entorno temporal: /tmp/pedros-audit-20260912
+asarPy==1.0.1
+iniconfig==2.3.0
+numpy==2.5.3
+packaging==26.3
+pluggy==1.6.0
+Pygments==2.21.0
+pytest==9.1.1
+PyYAML==6.0.3

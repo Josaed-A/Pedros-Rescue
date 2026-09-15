@@ -1,0 +1,6 @@
+YAML OK: src/rescue_bringup/config/ld19_params.yaml
+YAML OK: src/rescue_bringup/config/slam_toolbox_params.yaml
+YAML OK: src/rescue_command_station/config/arm.yaml
+YAML OK: src/rescue_robot_core/config/servos.yaml
+RViz YAML OK: src/rescue_bringup/config/slam_rviz.rviz
+XML Xacro OK (sin expansión): src/rescue_robot_description/urdf/rescue_robot.urdf.xacro

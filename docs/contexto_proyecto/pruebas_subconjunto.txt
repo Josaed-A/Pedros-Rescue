@@ -1,0 +1,304 @@
+..........EEEEEEEEEE.....                                                [100%]
+==================================== ERRORS ====================================
+____ ERROR at setup of AuditTests.test_copy_full_pose_preserves_orientation ____
+
+cls = <class 'test_arm_audit.AuditTests'>
+
+    @classmethod
+    def setUpClass(cls):
+>       cls.gui = load_gui()
+                  ^^^^^^^^^^
+
+src/rescue_command_station/test/test_arm_audit.py:25: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+src/rescue_command_station/tools/verify_arm_gui.py:77: in load_gui
+    exec(compile(ast.Module(body=body, type_ignores=[]), str(path), 'exec'), scope)
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+    """Arm station GUI: the delivered Python model and original Canvas.
+    
+    Joint feedback and active TCP pose arrive from ROS. Preview is local drawing
+    data, never a deferred command. All Cartesian moves use the shared planner;
+    manual joint commands are admitted by cartesian_node.
+    """
+    
+    import math
+    import threading
+    import time
+>   import tkinter as tk
+E   ModuleNotFoundError: No module named 'tkinter'
+
+src/rescue_command_station/rescue_command_station/arm/gui_node.py:11: ModuleNotFoundError
+_ ERROR at setup of AuditTests.test_driver_map_uses_enabled_names_and_rejects_collision _
+
+cls = <class 'test_arm_audit.AuditTests'>
+
+    @classmethod
+    def setUpClass(cls):
+>       cls.gui = load_gui()
+                  ^^^^^^^^^^
+
+src/rescue_command_station/test/test_arm_audit.py:25: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+src/rescue_command_station/tools/verify_arm_gui.py:77: in load_gui
+    exec(compile(ast.Module(body=body, type_ignores=[]), str(path), 'exec'), scope)
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+    """Arm station GUI: the delivered Python model and original Canvas.
+    
+    Joint feedback and active TCP pose arrive from ROS. Preview is local drawing
+    data, never a deferred command. All Cartesian moves use the shared planner;
+    manual joint commands are admitted by cartesian_node.
+    """
+    
+    import math
+    import threading
+    import time
+>   import tkinter as tk
+E   ModuleNotFoundError: No module named 'tkinter'
+
+src/rescue_command_station/rescue_command_station/arm/gui_node.py:11: ModuleNotFoundError
+_ ERROR at setup of AuditTests.test_failed_rotation_does_not_change_stabilization _
+
+cls = <class 'test_arm_audit.AuditTests'>
+
+    @classmethod
+    def setUpClass(cls):
+>       cls.gui = load_gui()
+                  ^^^^^^^^^^
+
+src/rescue_command_station/test/test_arm_audit.py:25: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+src/rescue_command_station/tools/verify_arm_gui.py:77: in load_gui
+    exec(compile(ast.Module(body=body, type_ignores=[]), str(path), 'exec'), scope)
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+    """Arm station GUI: the delivered Python model and original Canvas.
+    
+    Joint feedback and active TCP pose arrive from ROS. Preview is local drawing
+    data, never a deferred command. All Cartesian moves use the shared planner;
+    manual joint commands are admitted by cartesian_node.
+    """
+    
+    import math
+    import threading
+    import time
+>   import tkinter as tk
+E   ModuleNotFoundError: No module named 'tkinter'
+
+src/rescue_command_station/rescue_command_station/arm/gui_node.py:11: ModuleNotFoundError
+_ ERROR at setup of AuditTests.test_gui_calibration_acquires_before_drivers_and_releases_after_both _
+
+cls = <class 'test_arm_audit.AuditTests'>
+
+    @classmethod
+    def setUpClass(cls):
+>       cls.gui = load_gui()
+                  ^^^^^^^^^^
+
+src/rescue_command_station/test/test_arm_audit.py:25: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+src/rescue_command_station/tools/verify_arm_gui.py:77: in load_gui
+    exec(compile(ast.Module(body=body, type_ignores=[]), str(path), 'exec'), scope)
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+    """Arm station GUI: the delivered Python model and original Canvas.
+    
+    Joint feedback and active TCP pose arrive from ROS. Preview is local drawing
+    data, never a deferred command. All Cartesian moves use the shared planner;
+    manual joint commands are admitted by cartesian_node.
+    """
+    
+    import math
+    import threading
+    import time
+>   import tkinter as tk
+E   ModuleNotFoundError: No module named 'tkinter'
+
+src/rescue_command_station/rescue_command_station/arm/gui_node.py:11: ModuleNotFoundError
+_ ERROR at setup of AuditTests.test_maintenance_latches_and_rejects_all_station_publication _
+
+cls = <class 'test_arm_audit.AuditTests'>
+
+    @classmethod
+    def setUpClass(cls):
+>       cls.gui = load_gui()
+                  ^^^^^^^^^^
+
+src/rescue_command_station/test/test_arm_audit.py:25: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+src/rescue_command_station/tools/verify_arm_gui.py:77: in load_gui
+    exec(compile(ast.Module(body=body, type_ignores=[]), str(path), 'exec'), scope)
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+    """Arm station GUI: the delivered Python model and original Canvas.
+    
+    Joint feedback and active TCP pose arrive from ROS. Preview is local drawing
+    data, never a deferred command. All Cartesian moves use the shared planner;
+    manual joint commands are admitted by cartesian_node.
+    """
+    
+    import math
+    import threading
+    import time
+>   import tkinter as tk
+E   ModuleNotFoundError: No module named 'tkinter'
+
+src/rescue_command_station/rescue_command_station/arm/gui_node.py:11: ModuleNotFoundError
+_ ERROR at setup of AuditTests.test_partial_calibration_does_not_release_latch _
+
+cls = <class 'test_arm_audit.AuditTests'>
+
+    @classmethod
+    def setUpClass(cls):
+>       cls.gui = load_gui()
+                  ^^^^^^^^^^
+
+src/rescue_command_station/test/test_arm_audit.py:25: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+src/rescue_command_station/tools/verify_arm_gui.py:77: in load_gui
+    exec(compile(ast.Module(body=body, type_ignores=[]), str(path), 'exec'), scope)
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+    """Arm station GUI: the delivered Python model and original Canvas.
+    
+    Joint feedback and active TCP pose arrive from ROS. Preview is local drawing
+    data, never a deferred command. All Cartesian moves use the shared planner;
+    manual joint commands are admitted by cartesian_node.
+    """
+    
+    import math
+    import threading
+    import time
+>   import tkinter as tk
+E   ModuleNotFoundError: No module named 'tkinter'
+
+src/rescue_command_station/rescue_command_station/arm/gui_node.py:11: ModuleNotFoundError
+____ ERROR at setup of AuditTests.test_preview_never_sends_a_motor_command _____
+
+cls = <class 'test_arm_audit.AuditTests'>
+
+    @classmethod
+    def setUpClass(cls):
+>       cls.gui = load_gui()
+                  ^^^^^^^^^^
+
+src/rescue_command_station/test/test_arm_audit.py:25: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+src/rescue_command_station/tools/verify_arm_gui.py:77: in load_gui
+    exec(compile(ast.Module(body=body, type_ignores=[]), str(path), 'exec'), scope)
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+    """Arm station GUI: the delivered Python model and original Canvas.
+    
+    Joint feedback and active TCP pose arrive from ROS. Preview is local drawing
+    data, never a deferred command. All Cartesian moves use the shared planner;
+    manual joint commands are admitted by cartesian_node.
+    """
+    
+    import math
+    import threading
+    import time
+>   import tkinter as tk
+E   ModuleNotFoundError: No module named 'tkinter'
+
+src/rescue_command_station/rescue_command_station/arm/gui_node.py:11: ModuleNotFoundError
+_ ERROR at setup of AuditTests.test_reversed_limits_rejected_instead_of_silently_sorted _
+
+cls = <class 'test_arm_audit.AuditTests'>
+
+    @classmethod
+    def setUpClass(cls):
+>       cls.gui = load_gui()
+                  ^^^^^^^^^^
+
+src/rescue_command_station/test/test_arm_audit.py:25: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+src/rescue_command_station/tools/verify_arm_gui.py:77: in load_gui
+    exec(compile(ast.Module(body=body, type_ignores=[]), str(path), 'exec'), scope)
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+    """Arm station GUI: the delivered Python model and original Canvas.
+    
+    Joint feedback and active TCP pose arrive from ROS. Preview is local drawing
+    data, never a deferred command. All Cartesian moves use the shared planner;
+    manual joint commands are admitted by cartesian_node.
+    """
+    
+    import math
+    import threading
+    import time
+>   import tkinter as tk
+E   ModuleNotFoundError: No module named 'tkinter'
+
+src/rescue_command_station/rescue_command_station/arm/gui_node.py:11: ModuleNotFoundError
+_ ERROR at setup of AuditTests.test_simulator_feedback_matches_signed_real_encoder _
+
+cls = <class 'test_arm_audit.AuditTests'>
+
+    @classmethod
+    def setUpClass(cls):
+>       cls.gui = load_gui()
+                  ^^^^^^^^^^
+
+src/rescue_command_station/test/test_arm_audit.py:25: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+src/rescue_command_station/tools/verify_arm_gui.py:77: in load_gui
+    exec(compile(ast.Module(body=body, type_ignores=[]), str(path), 'exec'), scope)
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+    """Arm station GUI: the delivered Python model and original Canvas.
+    
+    Joint feedback and active TCP pose arrive from ROS. Preview is local drawing
+    data, never a deferred command. All Cartesian moves use the shared planner;
+    manual joint commands are admitted by cartesian_node.
+    """
+    
+    import math
+    import threading
+    import time
+>   import tkinter as tk
+E   ModuleNotFoundError: No module named 'tkinter'
+
+src/rescue_command_station/rescue_command_station/arm/gui_node.py:11: ModuleNotFoundError
+_ ERROR at setup of AuditTests.test_stale_joystick_does_not_start_another_segment _
+
+cls = <class 'test_arm_audit.AuditTests'>
+
+    @classmethod
+    def setUpClass(cls):
+>       cls.gui = load_gui()
+                  ^^^^^^^^^^
+
+src/rescue_command_station/test/test_arm_audit.py:25: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+src/rescue_command_station/tools/verify_arm_gui.py:77: in load_gui
+    exec(compile(ast.Module(body=body, type_ignores=[]), str(path), 'exec'), scope)
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+    """Arm station GUI: the delivered Python model and original Canvas.
+    
+    Joint feedback and active TCP pose arrive from ROS. Preview is local drawing
+    data, never a deferred command. All Cartesian moves use the shared planner;
+    manual joint commands are admitted by cartesian_node.
+    """
+    
+    import math
+    import threading
+    import time
+>   import tkinter as tk
+E   ModuleNotFoundError: No module named 'tkinter'
+
+src/rescue_command_station/rescue_command_station/arm/gui_node.py:11: ModuleNotFoundError
+=========================== short test summary info ============================
+ERROR src/rescue_command_station/test/test_arm_audit.py::AuditTests::test_copy_full_pose_preserves_orientation
+ERROR src/rescue_command_station/test/test_arm_audit.py::AuditTests::test_driver_map_uses_enabled_names_and_rejects_collision
+ERROR src/rescue_command_station/test/test_arm_audit.py::AuditTests::test_failed_rotation_does_not_change_stabilization
+ERROR src/rescue_command_station/test/test_arm_audit.py::AuditTests::test_gui_calibration_acquires_before_drivers_and_releases_after_both
+ERROR src/rescue_command_station/test/test_arm_audit.py::AuditTests::test_maintenance_latches_and_rejects_all_station_publication
+ERROR src/rescue_command_station/test/test_arm_audit.py::AuditTests::test_partial_calibration_does_not_release_latch
+ERROR src/rescue_command_station/test/test_arm_audit.py::AuditTests::test_preview_never_sends_a_motor_command
+ERROR src/rescue_command_station/test/test_arm_audit.py::AuditTests::test_reversed_limits_rejected_instead_of_silently_sorted
+ERROR src/rescue_command_station/test/test_arm_audit.py::AuditTests::test_simulator_feedback_matches_signed_real_encoder
+ERROR src/rescue_command_station/test/test_arm_audit.py::AuditTests::test_stale_joystick_does_not_start_another_segment
+15 passed, 10 errors in 2.75s

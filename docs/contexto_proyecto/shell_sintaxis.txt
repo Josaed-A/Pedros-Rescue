@@ -1,0 +1,6 @@
+scripts/ros_net_pi.sh: exit=0 
+scripts/install_pi_autostart.sh: exit=0 
+scripts/habilitar_usb_ros.sh: exit=0 
+scripts/run_slam_container.sh: exit=0 
+scripts/ros_net_pc.sh: exit=0 
+scripts/run_pi_sensors.sh: exit=0 

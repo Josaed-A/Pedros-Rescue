@@ -2,6 +2,66 @@
 
 Stack nativo probado: Raspberry Pi `gardian` + PC de mando.
 
+## Red usada en la sesión del 15 de septiembre de 2026
+
+```text
+PC (wlan0):  10.230.234.1
+Pi (wlan0):  10.230.234.137
+SSH estable: gardian@gardian.local
+```
+
+Estas direcciones se pasan al launch de forma explícita; no se modificaron los
+defaults del código. Para esta red, los comandos exactos son:
+
+```bash
+# Raspberry Pi
+source /opt/ros/jazzy/setup.bash
+source ~/pedros/install/setup.bash
+ros2 launch rescue_bringup pedro_pi.launch.py \
+  network:=wifi wifi_interface:=wlan0 \
+  pc_wifi_ip:=10.230.234.1 pi_wifi_ip:=10.230.234.137
+```
+
+```bash
+# PC, desde la raíz de este repositorio
+source /opt/ros/jazzy/setup.bash
+source install/setup.bash
+ros2 launch rescue_bringup pedro_pc.launch.py \
+  network:=wifi wifi_interface:=wlan0 \
+  pi_wifi_ip:=10.230.234.137 pc_wifi_ip:=10.230.234.1
+```
+
+### Si vuelve a cambiar la IP
+
+Primero consultar las direcciones, sin adivinarlas:
+
+```bash
+# PC
+ip -4 -brief address
+getent hosts gardian.local
+
+# Pi (entrando por su nombre, aunque cambie de IP)
+ssh gardian@gardian.local
+ip -4 -brief address
+```
+
+Después sustituir las dos direcciones en **ambos** comandos anteriores. La
+regla es simétrica:
+
+| Lado | IP del otro equipo | IP propia |
+|---|---|---|
+| Pi | `pc_wifi_ip` | `pi_wifi_ip` |
+| PC | `pi_wifi_ip` | `pc_wifi_ip` |
+
+Los defaults permanentes están declarados en
+`src/rescue_bringup/launch/pedro_pi.launch.py` y
+`src/rescue_bringup/launch/pedro_pc.launch.py`, en los argumentos
+`pc_wifi_ip`, `pi_wifi_ip` y `wifi_interface`. Los scripts alternativos
+`scripts/ros_net_pi.sh` y `scripts/ros_net_pc.sh` también contienen `_PEER`,
+`_SELF` e interfaz con valores fijos. Si otro agente decide cambiar defaults,
+debe actualizar los dos lados a la vez. Para un cambio temporal basta pasar los
+argumentos al launch como arriba; no es necesario editar código.
+
 ## Integración del brazo 6R
 
 El brazo incorpora el motor Python entregado y la representación Canvas original.
@@ -11,7 +71,10 @@ para instalar Chromium, revisar las medidas locales conservadas y probar primero
 Esta integración aún no se ha validado en un grafo ROS ni en hardware; los
 resultados están en [VALIDACION.md](src/rescue_command_station/docs/integracion_6r/VALIDACION.md).
 
-## Red
+## Defaults históricos de red
+
+Los siguientes valores siguen en los scripts y launches como defaults, pero
+**no corresponden a la red activa del 15 de septiembre de 2026**:
 
 ```text
 Pi por cable: 10.42.0.240  (eth0)
@@ -23,11 +86,12 @@ PC por WiFi: 192.168.231.15
 
 Los scripts `scripts/ros_net_pi.sh` y `scripts/ros_net_pc.sh` configuran CycloneDDS en unicast. Incluyen el peer remoto y la IP local para que los procesos de la misma maquina tambien se descubran cuando multicast esta deshabilitado.
 
-Verificacion rapida desde el PC:
+Verificación rápida desde el PC usando el nombre estable de la Pi:
 
 ```bash
-ping 10.42.0.240
-ssh gardian
+getent hosts gardian.local
+ping gardian.local
+ssh gardian@gardian.local
 ```
 
 ## Lanzar todo
@@ -35,10 +99,13 @@ ssh gardian
 ### 1. Pi
 
 ```bash
-ssh gardian
+ssh gardian@gardian.local
 cd ~/pedros
-source scripts/ros_net_pi.sh
-ros2 launch rescue_bringup pedro_pi.launch.py
+source /opt/ros/jazzy/setup.bash
+source install/setup.bash
+ros2 launch rescue_bringup pedro_pi.launch.py \
+  network:=wifi wifi_interface:=wlan0 \
+  pc_wifi_ip:=10.230.234.1 pi_wifi_ip:=10.230.234.137
 ```
 
 Este launch levanta:
@@ -54,9 +121,12 @@ Este launch levanta:
 En otra terminal:
 
 ```bash
-cd /home/semillero/Pedros-Rescue
-source scripts/ros_net_pc.sh
-ros2 launch rescue_bringup pedro_pc.launch.py
+cd /home/sebastian/Documents/pedros-rescue
+source /opt/ros/jazzy/setup.bash
+source install/setup.bash
+ros2 launch rescue_bringup pedro_pc.launch.py \
+  network:=wifi wifi_interface:=wlan0 \
+  pi_wifi_ip:=10.230.234.137 pc_wifi_ip:=10.230.234.1
 ```
 
 Este launch levanta:
@@ -67,6 +137,9 @@ Este launch levanta:
 - `joy_node` y `ps4_teleop_node`.
 
 ## Argumentos utiles
+
+Al forzar `network`, pasar también interfaz y las dos IP si no coinciden con
+los defaults históricos.
 
 Forzar red:
 

@@ -5,8 +5,8 @@
     base_height: 0.12  # preserved from local test/cinematica configuration
     L1: 0.36  # preserved from local test/cinematica configuration
     L2: 0.36  # preserved from local test/cinematica configuration
-    L3: 0.0  # preserved from local test/cinematica configuration
-    tool_length: 0.0  # preserved from local test/cinematica configuration
+    L3: 0.05  # third link length, 5cm
+    tool_length: 0.08  # yellow bar (TCP tool), 8cm
     e56: 0.0          # provisional axial offset J5 -> J6
     camera_xyz: [0.06, 0.0, 0.04]  # EXAMPLE, not hand-eye calibration
     camera_rpy: [0.0, 0.0, 0.0]   # EXAMPLE mounting Rz(yaw) Ry(pitch) Rx(roll)

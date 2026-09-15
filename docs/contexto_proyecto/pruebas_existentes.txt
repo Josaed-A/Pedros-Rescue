@@ -1,0 +1,18 @@
+
+==================================== ERRORS ====================================
+______________ ERROR collecting test/test_station_integration.py _______________
+ImportError while importing test module '/home/sebastian/Documents/pedros-rescue/src/rescue_command_station/test/test_station_integration.py'.
+Hint: make sure your test modules/packages have valid Python names.
+Traceback:
+/usr/lib/python3.13/importlib/__init__.py:88: in import_module
+    return _bootstrap._gcd_import(name[level:], package, level)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+src/rescue_command_station/test/test_station_integration.py:17: in <module>
+    from rescue_command_station.arm.web_view import scene_payload
+src/rescue_command_station/rescue_command_station/arm/web_view.py:10: in <module>
+    import tkinter as tk
+E   ModuleNotFoundError: No module named 'tkinter'
+=========================== short test summary info ============================
+ERROR src/rescue_command_station/test/test_station_integration.py
+!!!!!!!!!!!!!!!!!!!! Interrupted: 1 error during collection !!!!!!!!!!!!!!!!!!!!
+1 error in 0.29s

@@ -1,0 +1,6 @@
+Reproducción aislada del orden de resolución de configuración — 2026-09-12
+Método: función joint_drivers extraída por AST del código actual; config_path sustituido por un resolver falso que informa que core no está instalado; _parameter registra si se intenta leer una ruta personalizada.
+No se importó ROS, numpy, drivers ni se modificó configuración.
+Resultado: se intenta resolver rescue_robot_core y la excepción ocurre antes de consultar servos_config_path.
+Esto confirma el orden local de llamadas, no una ejecución real de ROS launch.
+Traza: ['config_path llamado para rescue_robot_core']

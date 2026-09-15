@@ -1,0 +1,1 @@
+COINCIDE: canvas.js actual frente al generador y dist original. Generador ejecutado con mkdir/write_text interceptados; fuente no modificada.

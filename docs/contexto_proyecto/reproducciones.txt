@@ -1,0 +1,6 @@
+H04 REPRODUCIDO: tras OSError se publica eje=1 con hora nueva y fd=None
+H08 REPRODUCIDO: CvBridge local rechaza 32FC1
+H09 REPRODUCIDO: decodificador estación falla con padding RGB válido step=4 width=1
+H16 REPRODUCIDO: parser nube falla con padding row_step=16 point_step=12
+H17 REPRODUCIDO: scan con stamp cero pasa frescura sin comparar edad
+H07: rayo cero LiDAR bajo yaw=pi apunta a -X de la base

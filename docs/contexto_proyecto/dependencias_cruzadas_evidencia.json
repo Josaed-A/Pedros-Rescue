@@ -1,0 +1,267 @@
+{
+  "scope": "AST/manifest estático, excluye tests/tools, no ejecuta paquetes",
+  "declared_internal_edges": [
+    {
+      "from": "rescue_bringup",
+      "to": "rescue_command_station",
+      "kind": "exec_depend",
+      "file": "src/rescue_bringup/package.xml"
+    },
+    {
+      "from": "rescue_bringup",
+      "to": "rescue_robot_core",
+      "kind": "exec_depend",
+      "file": "src/rescue_bringup/package.xml"
+    },
+    {
+      "from": "rescue_bringup",
+      "to": "rescue_robot_description",
+      "kind": "exec_depend",
+      "file": "src/rescue_bringup/package.xml"
+    },
+    {
+      "from": "rescue_bringup",
+      "to": "cv_bridge",
+      "kind": "exec_depend",
+      "file": "src/rescue_bringup/package.xml"
+    },
+    {
+      "from": "rescue_command_station",
+      "to": "rescue_interfaces",
+      "kind": "depend",
+      "file": "src/rescue_command_station/package.xml"
+    },
+    {
+      "from": "rescue_command_station",
+      "to": "joy",
+      "kind": "exec_depend",
+      "file": "src/rescue_command_station/package.xml"
+    },
+    {
+      "from": "rescue_command_station",
+      "to": "rescue_robot_core",
+      "kind": "exec_depend",
+      "file": "src/rescue_command_station/package.xml"
+    },
+    {
+      "from": "rescue_robot_core",
+      "to": "rescue_interfaces",
+      "kind": "depend",
+      "file": "src/rescue_robot_core/package.xml"
+    }
+  ],
+  "cross_package_imports": [
+    {
+      "from": "rescue_bringup",
+      "to": "cv_bridge",
+      "file": "src/rescue_bringup/rescue_bringup/object_detector.py",
+      "line": 52,
+      "import": "cv_bridge"
+    },
+    {
+      "from": "rescue_command_station",
+      "to": "rescue_interfaces",
+      "file": "src/rescue_command_station/rescue_command_station/arm/cartesian_node.py",
+      "line": 11,
+      "import": "rescue_interfaces.srv"
+    },
+    {
+      "from": "rescue_command_station",
+      "to": "rescue_interfaces",
+      "file": "src/rescue_command_station/rescue_command_station/arm/cartesian_node.py",
+      "line": 12,
+      "import": "rescue_interfaces.msg"
+    },
+    {
+      "from": "rescue_command_station",
+      "to": "rescue_interfaces",
+      "file": "src/rescue_command_station/rescue_command_station/arm/cinematica_node.py",
+      "line": 18,
+      "import": "rescue_interfaces.srv"
+    },
+    {
+      "from": "rescue_command_station",
+      "to": "rescue_interfaces",
+      "file": "src/rescue_command_station/rescue_command_station/arm/gui_node.py",
+      "line": 22,
+      "import": "rescue_interfaces.msg"
+    },
+    {
+      "from": "rescue_command_station",
+      "to": "rescue_interfaces",
+      "file": "src/rescue_command_station/rescue_command_station/arm/gui_node.py",
+      "line": 23,
+      "import": "rescue_interfaces.srv"
+    },
+    {
+      "from": "rescue_command_station",
+      "to": "rescue_interfaces",
+      "file": "src/rescue_command_station/rescue_command_station/arm/gui_node.py",
+      "line": 25,
+      "import": "rescue_interfaces.msg"
+    },
+    {
+      "from": "rescue_robot_core",
+      "to": "rescue_interfaces",
+      "file": "src/rescue_robot_core/rescue_robot_core/nodes/dynamixel_bus_node.py",
+      "line": 57,
+      "import": "rescue_interfaces.msg"
+    },
+    {
+      "from": "rescue_robot_core",
+      "to": "rescue_interfaces",
+      "file": "src/rescue_robot_core/rescue_robot_core/nodes/dynamixel_bus_node.py",
+      "line": 58,
+      "import": "rescue_interfaces.srv"
+    },
+    {
+      "from": "rescue_robot_core",
+      "to": "rescue_interfaces",
+      "file": "src/rescue_robot_core/rescue_robot_core/nodes/dynamixel_sim_node.py",
+      "line": 35,
+      "import": "rescue_interfaces.msg"
+    },
+    {
+      "from": "rescue_robot_core",
+      "to": "rescue_interfaces",
+      "file": "src/rescue_robot_core/rescue_robot_core/nodes/dynamixel_sim_node.py",
+      "line": 36,
+      "import": "rescue_interfaces.srv"
+    },
+    {
+      "from": "rescue_robot_core",
+      "to": "rescue_interfaces",
+      "file": "src/rescue_robot_core/rescue_robot_core/nodes/ex106_driver_node.py",
+      "line": 47,
+      "import": "rescue_interfaces.msg"
+    },
+    {
+      "from": "rescue_robot_core",
+      "to": "rescue_interfaces",
+      "file": "src/rescue_robot_core/rescue_robot_core/nodes/ex106_driver_node.py",
+      "line": 48,
+      "import": "rescue_interfaces.srv"
+    }
+  ],
+  "package_resource_lookups": [
+    {
+      "from": "rescue_bringup",
+      "to": "rescue_bringup",
+      "file": "src/rescue_bringup/launch/full_bringup.launch.py",
+      "line": 52,
+      "call": "get_package_share_directory('rescue_bringup')"
+    },
+    {
+      "from": "rescue_bringup",
+      "to": "rescue_bringup",
+      "file": "src/rescue_bringup/launch/lidar_ld19.launch.py",
+      "line": 34,
+      "call": "get_package_share_directory('rescue_bringup')"
+    },
+    {
+      "from": "rescue_bringup",
+      "to": "rescue_bringup",
+      "file": "src/rescue_bringup/launch/pedro_pc.launch.py",
+      "line": 105,
+      "call": "get_package_share_directory('rescue_bringup')"
+    },
+    {
+      "from": "rescue_bringup",
+      "to": "rescue_command_station",
+      "file": "src/rescue_bringup/launch/pedro_pc.launch.py",
+      "line": 106,
+      "call": "get_package_share_directory('rescue_command_station')"
+    },
+    {
+      "from": "rescue_bringup",
+      "to": "rescue_bringup",
+      "file": "src/rescue_bringup/launch/pedro_pi.launch.py",
+      "line": 148,
+      "call": "get_package_share_directory('rescue_bringup')"
+    },
+    {
+      "from": "rescue_bringup",
+      "to": "rescue_robot_core",
+      "file": "src/rescue_bringup/launch/pedro_pi.launch.py",
+      "line": 205,
+      "call": "get_package_share_directory('rescue_robot_core')"
+    },
+    {
+      "from": "rescue_bringup",
+      "to": "rescue_bringup",
+      "file": "src/rescue_bringup/launch/pi_sensors.launch.py",
+      "line": 45,
+      "call": "get_package_share_directory('rescue_bringup')"
+    },
+    {
+      "from": "rescue_bringup",
+      "to": "rescue_robot_core",
+      "file": "src/rescue_bringup/launch/pi_sensors.launch.py",
+      "line": 116,
+      "call": "get_package_share_directory('rescue_robot_core')"
+    },
+    {
+      "from": "rescue_bringup",
+      "to": "rescue_robot_description",
+      "file": "src/rescue_bringup/launch/robot_description.launch.py",
+      "line": 26,
+      "call": "get_package_share_directory('rescue_robot_description')"
+    },
+    {
+      "from": "rescue_bringup",
+      "to": "rescue_bringup",
+      "file": "src/rescue_bringup/launch/slam.launch.py",
+      "line": 52,
+      "call": "get_package_share_directory('rescue_bringup')"
+    },
+    {
+      "from": "rescue_bringup",
+      "to": "rescue_bringup",
+      "file": "src/rescue_bringup/launch/vision.launch.py",
+      "line": 40,
+      "call": "get_package_share_directory('rescue_bringup')"
+    },
+    {
+      "from": "rescue_command_station",
+      "to": "rescue_command_station",
+      "file": "src/rescue_command_station/launch/arm_station.launch.py",
+      "line": 30,
+      "call": "get_package_share_directory('rescue_command_station')"
+    },
+    {
+      "from": "rescue_command_station",
+      "to": "rescue_robot_core",
+      "file": "src/rescue_command_station/launch/arm_station.launch.py",
+      "line": 32,
+      "call": "get_package_share_directory('rescue_robot_core')"
+    },
+    {
+      "from": "rescue_command_station",
+      "to": "rescue_command_station",
+      "file": "src/rescue_command_station/rescue_command_station/arm/configuration.py",
+      "line": 30,
+      "call": "config_path('rescue_command_station', 'arm.yaml', prefer_installed=node is not None)"
+    },
+    {
+      "from": "rescue_command_station",
+      "to": "rescue_robot_core",
+      "file": "src/rescue_command_station/rescue_command_station/arm/configuration.py",
+      "line": 46,
+      "call": "config_path('rescue_robot_core', 'servos.yaml', prefer_installed=node is not None)"
+    },
+    {
+      "from": "rescue_command_station",
+      "to": "rescue_bringup",
+      "file": "src/rescue_command_station/rescue_command_station/nodes/dashboard_node.py",
+      "line": 961,
+      "call": "get_package_share_directory('rescue_bringup')"
+    },
+    {
+      "from": "rescue_robot_core",
+      "to": "rescue_robot_core",
+      "file": "src/rescue_robot_core/launch/servos.launch.py",
+      "line": 28,
+      "call": "get_package_share_directory('rescue_robot_core')"
+    }
+  ]
+}

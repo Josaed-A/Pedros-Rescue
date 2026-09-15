@@ -1,0 +1,2 @@
+Comparados 163 archivos versionados contra SHA256 inicial.
+Cambios introducidos respecto al inicio: []
