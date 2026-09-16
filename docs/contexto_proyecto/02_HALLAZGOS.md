@@ -1,5 +1,11 @@
 # Hallazgos — evidencia independiente
 
+Ampliación del 15 de septiembre: [perfil básico y exclusiones](09_PERFIL_BASICO_Y_EXCLUSIONES.md).
+Conserva los IDs de esta auditoría, incorpora B01–B05 y distingue fallos estáticos,
+observaciones históricas y pruebas físicas pendientes. H06 se refiere al entorno
+aislado; se verificaron imports ROS en Python 3.12 del host. No se declararon
+resueltos H01–H29 por esta revisión.
+
 Estado: informe consolidado al cierre; revisión estática salvo indicación expresa. Alta = fallo de un flujo principal o control; media = contrato/reproducibilidad/mantenibilidad; baja = higiene. No se aplicaron correcciones.
 
 ## H01 · Alta · El launch principal Pi incluye los servos dos veces

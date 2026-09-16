@@ -1,5 +1,28 @@
 # Dependencias cruzadas y separación entre PC y robot
 
+## Plan de implementación acordado — apodos lógicos
+
+El usuario pidió un plan detallado y estableció que el PC conozca `Hombro`,
+mientras la Pi resuelve su bus/ID físico. El plan vigente está en
+[10_PLAN_LIMPIEZA_Y_ARQUITECTURA.md](10_PLAN_LIMPIEZA_Y_ARQUITECTURA.md):
+contrato por nombres, configuración privada Pi, simulación independiente,
+matriz de retirada, fases, pruebas y recuperación. Incluye migrar servicios
+de mantenimiento y feedback; no solo el tópico de movimiento.
+
+Las propuestas generales siguientes son antecedentes. La decisión vigente
+descarta copiar el mapa de buses/IDs al PC o moverlo a un paquete compartido.
+Se comparten contratos y modelo lógico, no detalles de hardware. Plan pendiente
+de implementación; no se han borrado componentes por esta solicitud.
+
+## Auditoría operativa del perfil básico
+
+El inventario de lo necesario, lo que falla y lo excluible para movimiento,
+brazo y cámaras está en [09_PERFIL_BASICO_Y_EXCLUSIONES.md](09_PERFIL_BASICO_Y_EXCLUSIONES.md).
+Incluye todos los launches locales, YOLO/Hazmat, SLAM 2D, nubes 3D, exportación,
+scripts y limitaciones de hardware. Las IP de la nota siguiente son históricas:
+en la revisión posterior el PC volvió a `172.23.12.235/23`, con el launch aún
+configurado para la red anterior. Consultar direcciones reales antes de arrancar.
+
 ## Nota operativa de red — 2026-09-15
 
 Durante la ejecución real de esta sesión, el PC quedó en `10.230.234.1/24` por

@@ -1,5 +1,23 @@
 # Contexto del proyecto Pedro’s Rescue
 
+Plan vigente para implementar limpieza y separación PC/Pi:
+[10_PLAN_LIMPIEZA_Y_ARQUITECTURA.md](10_PLAN_LIMPIEZA_Y_ARQUITECTURA.md).
+Decisión del usuario: órdenes y feedback por apodo lógico (`Hombro`); solo Pi
+conoce bus/ID/calibración. Incluye matrices de migración/borrado, ocho fases
+F0–F7 y pruebas de independencia. Solo planificación.
+
+## Revisión vigente del perfil básico — 2026-09-15
+
+Para movimiento, brazo/patas y transmisión de cámaras, leer primero
+[09_PERFIL_BASICO_Y_EXCLUSIONES.md](09_PERFIL_BASICO_Y_EXCLUSIONES.md).
+Incluye los 15 launches, seis scripts, todos los grupos de percepción/YOLO/Hazmat,
+SLAM 2D, nubes 3D, exportadores y herramientas, clasificados por necesidad y
+evidencia. Conserva H01–H29/D01–D10 y añade B01–B05. También rectifica las
+inferencias anteriores sobre saturación, tasa de `/cmd_vel` y entorno ROS.
+Es una revisión/documentación; la operación física integral sigue sin validarse.
+
+El resto de esta introducción conserva el corte histórico del 12 de septiembre.
+
 Esta carpeta es el contexto principal del proyecto y el punto de reanudación para cualquier IA o colaborador. Elaborado por Codex a partir del código, configuración y comprobaciones del checkout local el 2026-09-12. Incluye arquitectura, inventario, auditoría, trabajo realizado y pendientes.
 
 Alcance actual: mantener contexto verificable y reportar estructura, arquitectura, residuos, contratos y fuentes de verdad. La auditoría no autorizó correcciones de implementación. Posteriormente el usuario pidió eliminar el contexto anterior y consolidar esta documentación; esa reorganización ya está completada.

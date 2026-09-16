@@ -1,5 +1,39 @@
 # Trabajo realizado, objetivo y pendientes
 
+## Plan detallado de arquitectura — 2026-09-15
+
+Solicitud posterior a la auditoría: dejar un plan que permita retirar extras y
+separar instalación/ejecución PC/Pi. El usuario precisó el enrutamiento por apodos:
+PC manda `Hombro`; Pi conoce ID físico. Se adoptó en
+[10_PLAN_LIMPIEZA_Y_ARQUITECTURA.md](10_PLAN_LIMPIEZA_Y_ARQUITECTURA.md).
+
+Entregado: arquitectura objetivo, contrato v2 propuesto, migración de configuración,
+servicios de mantenimiento y simulación, matriz de retirada, fases F0–F7,
+criterios de aceptación y recuperación. Implementación, cambios físicos, commits
+de limpieza y despliegue siguen pendientes; la petición actual es solo el plan.
+
+## Ampliación completada — perfil básico, 2026-09-15
+
+Solicitud: revisar qué impide movimiento, brazo y cámaras; registrar todo lo
+excluible o defectuoso, incluidos YOLO/Hazmat, SLAM 2D/3D y launches.
+Resultado: [09_PERFIL_BASICO_Y_EXCLUSIONES.md](09_PERFIL_BASICO_Y_EXCLUSIONES.md).
+
+- Revisados los 15 launches y seis scripts; clasificados módulos, modelos,
+  entrenamiento, exportadores, herramientas y dependencias.
+- Reejecutadas cinco reproducciones aisladas H04/H08/H09/H16/H17 en el host.
+- Verificados imports ROS del host y coincidencia de tres launches fuente/install
+  del PC. Pi inaccesible desde la red actual; versión remota no comprobada.
+- Añadidos B01–B05: reapertura de Logitech, suscripciones pesadas de presencia,
+  QoS raw condicional, nombre de servicio de exportación y autoconexión parcial de buses.
+- Corregidas inferencias de sesión: 40 Hz no prueba duplicación; saturación por
+  cámaras no demostrada; la red activa del PC cambió respecto al launch vivo.
+- Solo cambios documentales. No se modificó ni reinició el sistema en esta revisión.
+
+Pendiente de implementación y validación: receta básica con un único propietario
+de cada bus, desconexión/parada efectiva, calibración y vídeo sostenido en hardware.
+
+## Registro histórico del 12 de septiembre
+
 Estado al cierre 2026-09-12: **auditoría estática general entregada; sin correcciones de implementación**. Se completó la documentación de continuidad. Las pruebas de integración/hardware siguen pendientes y están explícitamente delimitadas; no se presentan como aprobadas.
 
 ## Objetivo autorizado
