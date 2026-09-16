@@ -66,7 +66,7 @@ try:
 except ImportError:
     _YOLO_OK = False
 
-from rescue_bringup.hazmat_common import run_hazmat_yolo
+from rescue_bringup.hazmat_common import load_hazmat_model, run_hazmat
 
 
 # ── Objetos YOLO que consideramos "objetos de misión" ─────────────────────────
@@ -85,7 +85,7 @@ YOLO_TARGET_CLASSES: Dict[str, str] = {
 }
 
 # Umbral de confianza YOLO
-YOLO_CONF = 0.50
+YOLO_CONF = 0.70
 
 # Rango válido del sensor de profundidad (m)
 DEPTH_MIN = 0.3
@@ -305,11 +305,11 @@ class ObjectDetector(Node):
         # resultados (ver _submit_frame_to_worker / _on_hazmat_result).
         self._hazmat_yolo = None
         hazmat_model_path = self.get_parameter('hazmat_model').value
-        if self._hazmat_mode == 'local' and _YOLO_OK and self.get_parameter('enable_hazmat').value \
-                and hazmat_model_path:
+        if self._hazmat_mode == 'local' and self.get_parameter('enable_hazmat').value \
+                and hazmat_model_path and (_YOLO_OK or hazmat_model_path.endswith('.eim')):
             if os.path.exists(hazmat_model_path):
                 try:
-                    self._hazmat_yolo = _YOLO(hazmat_model_path)
+                    self._hazmat_yolo = load_hazmat_model(hazmat_model_path)
                     self.get_logger().info(f'YOLO (hazmat) cargado: {hazmat_model_path}')
                 except Exception as exc:
                     self.get_logger().warn(f'No se pudo cargar hazmat YOLO: {exc}')
@@ -593,7 +593,7 @@ class ObjectDetector(Node):
         """Detecta señales hazmat con el modelo YOLO entrenado (49 clases)."""
         conf = float(self.get_parameter('hazmat_conf').value)
         try:
-            return run_hazmat_yolo(self._hazmat_yolo, bgr, conf, self._hazmat_imgsz)
+            return run_hazmat(self._hazmat_yolo, bgr, conf, self._hazmat_imgsz)
         except Exception as exc:
             self.get_logger().debug(f'Hazmat YOLO error: {exc}')
             return []
@@ -802,6 +802,9 @@ class ObjectDetector(Node):
     def _draw_annotated(self, bgr: np.ndarray, detections: list) -> np.ndarray:
         annotated = bgr.copy()
         for det in detections:
+            if det['type'] == 'hazmat_sign' and 'class_id' in det:
+                self._draw_hazmat_box(annotated, det)
+                continue
             color = self._DET_COLORS.get(det['type'], (200, 200, 200))
             x1 = det.get('x1', det['u'] - 20)
             y1 = det.get('y1', det['v'] - 20)
@@ -812,6 +815,20 @@ class ObjectDetector(Node):
             cv2.putText(annotated, label, (x1, max(y1 - 5, 12)),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.48, color, 1, cv2.LINE_AA)
         return annotated
+
+    @staticmethod
+    def _draw_hazmat_box(img: np.ndarray, det: dict) -> None:
+        """Mismo estilo que hazmat/training/test_hazmat_camera.py: color por
+        clase y etiqueta 'clase conf' en blanco sobre fondo del color."""
+        col = hazmat_color(det['class_id'])
+        x1, y1, x2, y2 = det['x1'], det['y1'], det['x2'], det['y2']
+        cv2.rectangle(img, (x1, y1), (x2, y2), col, 2)
+        lbl = f"{det['name'][:16]} {det['conf']:.2f}"
+        (tw, th), _ = cv2.getTextSize(lbl, cv2.FONT_HERSHEY_SIMPLEX, 0.5, 1)
+        ty = y1 if y1 - th - 6 >= 0 else y1 + th + 6  # que no se salga por arriba
+        cv2.rectangle(img, (x1, ty - th - 6), (x1 + tw + 4, ty), col, -1)
+        cv2.putText(img, lbl, (x1 + 2, ty - 4),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
 
     def _publish_annotated_frame(self, annotated: np.ndarray) -> None:
         if self._annotated_pub.get_subscription_count() == 0:

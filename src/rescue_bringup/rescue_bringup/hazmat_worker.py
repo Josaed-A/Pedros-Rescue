@@ -61,13 +61,7 @@ try:
 except ImportError:
     _CV2_OK = False
 
-try:
-    from ultralytics import YOLO as _YOLO
-    _YOLO_OK = True
-except ImportError:
-    _YOLO_OK = False
-
-from rescue_bringup.hazmat_common import run_hazmat_yolo
+from rescue_bringup.hazmat_common import load_hazmat_model, run_hazmat
 
 
 class _CameraSlot:
@@ -101,9 +95,6 @@ class HazmatWorker(Node):
         if not _CV2_OK:
             self.get_logger().fatal('OpenCV (cv2) no encontrado — instala python3-opencv')
             raise RuntimeError('cv2 requerido')
-        if not _YOLO_OK:
-            self.get_logger().fatal('ultralytics no encontrado — pip3 install ultralytics')
-            raise RuntimeError('ultralytics requerido')
 
         camera_ids = [str(c) for c in self.get_parameter('camera_ids').value]
         model_path = self.get_parameter('hazmat_model').value
@@ -114,14 +105,20 @@ class HazmatWorker(Node):
         self._release_sec = float(self.get_parameter('priority_release_sec').value)
 
         if not model_path:
-            self.get_logger().fatal("hazmat_worker requiere el parametro 'hazmat_model' (.pt)")
+            self.get_logger().fatal("hazmat_worker requiere el parametro 'hazmat_model' (.pt o .eim)")
             raise RuntimeError('hazmat_model requerido')
 
-        # Modelo cargado UNA sola vez para todas las camaras.
-        self._model = _YOLO(model_path)
+        # Modelo cargado UNA sola vez para todas las camaras (.pt → ultralytics,
+        # .eim → runner Edge Impulse; ver hazmat_common.load_hazmat_model).
+        try:
+            self._model = load_hazmat_model(model_path)
+        except Exception as exc:
+            self.get_logger().fatal(f'No se pudo cargar hazmat_model {model_path}: {exc}')
+            raise
+        backend = getattr(self._model, 'description', 'ultralytics YOLO')
         self.get_logger().info(
             f'HAZMAT worker activo — modelo cargado UNA vez: {model_path} '
-            f'({len(self._model.names)} clases) para cámaras: {camera_ids}')
+            f'[{backend}] ({len(self._model.names)} clases) para cámaras: {camera_ids}')
 
         qos = QoSProfile(
             history=QoSHistoryPolicy.KEEP_LAST, depth=1,
@@ -210,7 +207,7 @@ class HazmatWorker(Node):
         stamp = frame_entry['stamp']
 
         try:
-            detections = run_hazmat_yolo(self._model, bgr, self._conf, self._imgsz)
+            detections = run_hazmat(self._model, bgr, self._conf, self._imgsz)
         except Exception as exc:
             # No perder este frame en silencio: si no publicamos nada, la
             # entrada de este seq queda "colgada" en el buffer del detector
@@ -260,6 +257,13 @@ class HazmatWorker(Node):
             self._boosted_cam = None
             for slot in self._slots.values():
                 slot.consecutive_hits = 0
+
+    def destroy_node(self):
+        # Un .eim es un subproceso: cerrarlo junto con el nodo.
+        close = getattr(self._model, 'close', None)
+        if close is not None:
+            close()
+        super().destroy_node()
 
 
 def main(args=None):

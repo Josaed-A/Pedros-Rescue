@@ -114,6 +114,24 @@ def _resolve_camera(name_hint: str, fallback: str) -> str:
     return fallback
 
 
+def _first_other_camera(exclude_index: str, fallback: str) -> str:
+    """Indice de captura (el menor por camara) de la primera camara cuyo
+    nombre no sea el de `exclude_index`."""
+    import glob
+    by_name = {}
+    for dev in glob.glob('/sys/class/video4linux/video*'):
+        try:
+            with open(os.path.join(dev, 'name')) as f:
+                cam_name = f.read().strip()
+            idx = int(os.path.basename(dev).replace('video', ''))
+        except (OSError, ValueError):
+            continue
+        by_name[cam_name] = min(idx, by_name.get(cam_name, idx))
+    excluded = [n for n, i in by_name.items() if str(i) == exclude_index]
+    others = sorted(i for n, i in by_name.items() if n not in excluded)
+    return str(others[0]) if others else fallback
+
+
 def _find_alerts_dir(launch_file: str) -> str:
     """
     Resuelve hazmat/alertas_detectadas junto al checkout del repo. Con
@@ -136,7 +154,9 @@ def _find_alerts_dir(launch_file: str) -> str:
 
 def generate_launch_description():
     pkg_bringup = get_package_share_directory('rescue_bringup')
-    default_hazmat_model = os.path.join(pkg_bringup, 'models', 'best.pt')
+    # Modelo Edge Impulse (x86_64, solo PC). Para el YOLO entrenado:
+    #   hazmat_model:=<share>/rescue_bringup/models/best.pt
+    default_hazmat_model = os.path.join(pkg_bringup, 'models', 'hazmat_ei_v3.eim')
     default_alerts_dir = _find_alerts_dir(__file__)
     # Captura automatica de alertas SUSPENDIDA por ahora — no se elimina la
     # funcion (object_detector.py sigue soportandola tal cual), solo queda
@@ -146,8 +166,10 @@ def generate_launch_description():
     # (o alerts_dir:=<default_alerts_dir> para volver a hazmat/alertas_detectadas/).
 
     # Autodeteccion por nombre; los defaults numericos quedan de respaldo.
-    _front_default = _resolve_camera('GENERAL WEBCAM', '2')
-    _astra_default = _resolve_camera('HP HD Camera',   '0')
+    # Slot "astra" = camara integrada. Slot "front" = GENERAL WEBCAM si esta
+    # conectada; si no, la primera OTRA camara USB que haya (p.ej. una Logitech).
+    _astra_default = _resolve_camera('HP HD Camera', '0')
+    _front_default = _resolve_camera('GENERAL WEBCAM', '') or _first_other_camera(_astra_default, '2')
 
     general_webcam_device = LaunchConfiguration('general_webcam_device', default=_front_default)
     local_camera_device   = LaunchConfiguration('local_camera_device',   default=_astra_default)
@@ -312,7 +334,7 @@ def generate_launch_description():
         DeclareLaunchArgument('local_camera_device', default_value=_astra_default,
                               description='Indice /dev/videoN de la camara local (autodetectado por nombre)'),
         DeclareLaunchArgument('hazmat_model', default_value=default_hazmat_model,
-                              description='Ruta al modelo YOLO hazmat (.pt). Vacio = HSV fallback'),
+                              description='Modelo hazmat: .eim (Edge Impulse, default) o .pt (YOLO)'),
         DeclareLaunchArgument('enable_yolo', default_value='true',
                               description='Habilitar YOLO COCO (objetos de mision)'),
         DeclareLaunchArgument('enable_apriltag', default_value='true',

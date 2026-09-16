@@ -7,7 +7,8 @@ entrenamiento, prueba standalone con OpenCV y las capturas de evidencia.
 hazmat/
 ├── README.md            → este documento (referencia completa de detección)
 ├── models/              → symlink a ../src/rescue_bringup/models
-│                          best.pt (hazmat, 49 clases) + yolov8n.pt (COCO preentrenado)
+│                          hazmat_ei_v3.eim (Edge Impulse, 15 clases) + best.pt
+│                          (YOLO hazmat, 49 clases) + yolov8n.pt (COCO preentrenado)
 ├── training/
 │   ├── train_hazmat.py       → entrenamiento sobre datasets/hazmat/
 │   ├── export_to_onnx.py     → export .pt → .onnx
@@ -26,15 +27,34 @@ se instala vía `data_files` en `setup.py` y los launch files lo resuelven con
 empaquetado `ament_python`, así que el symlink lo deja visible junto al resto
 del material hazmat sin duplicarlo ni sacarlo de su ubicación real.
 
-Ahí viven **los dos modelos** del proyecto:
+Ahí viven los modelos del proyecto:
 
 | Archivo | Qué es | En git |
 |---|---|---|
-| `best.pt` | Modelo hazmat entrenado (49 clases de señales) | Sí |
+| `hazmat_ei_v3.eim` | Modelo hazmat de Edge Impulse (proyecto HAZMAT v3, 96×96, 15 clases). **Default en las pruebas locales.** Binario Linux x86_64: solo corre en el PC | Pendiente (52 MB) |
+| `best.pt` | Modelo hazmat YOLO entrenado (49 clases de señales). Default en el robot (Pi) | Sí |
 | `yolov8n.pt` | Preentrenado COCO de ultralytics (objetos de misión: persona/víctima, mochila, botella…) | No — se descarga solo |
 
 `yolov8n.pt` está gitignored porque ultralytics lo descarga automáticamente a
 esa misma ruta si falta; no hace falta versionarlo.
+
+### Backends del modelo hazmat
+
+`hazmat_model` acepta cualquiera de los dos formatos; el backend se elige por
+extensión (`hazmat_common.load_hazmat_model`) y ambos devuelven el mismo dict
+de detección, así que worker, dibujo y alertas no cambian:
+
+- **`.pt`** → ultralytics YOLO (`hazmat_imgsz` controla la resolución).
+- **`.eim`** → runner de Edge Impulse (`hazmat_eim.py`): el ejecutable se
+  lanza como subproceso y se le habla por socket UNIX con JSON. No necesita
+  ni ultralytics ni el SDK de Edge Impulse. La entrada es fija (96×96,
+  `fit-shortest`): el modelo ve solo el **centro cuadrado** del frame (en
+  640×480 quedan fuera ~80 px a cada lado). `hazmat_conf` se aplica al runner
+  vía `set_threshold` (el export trae 0.5).
+
+Un `.eim` es específico de arquitectura: para la Raspberry Pi hay que
+exportar desde Edge Impulse el deployment **Linux (AARCH64)**; el x86_64
+actual no arranca ahí.
 
 ## Arquitectura
 
@@ -125,7 +145,25 @@ fallback HSV — normalmente por `ultralytics` sin instalar
 (`pip3 install -r setup/requirements_raspberry.txt`) o una ruta de
 `hazmat_model` incorrecta.
 
-### 3. Prueba local con las dos cámaras del PC (sin robot)
+### 3. Prueba simple: una cámara, un detector, un worker
+
+```bash
+ros2 launch rescue_bringup test_hazmat_simple.launch.py
+```
+
+`logitech_pub` → `object_detector` (modo worker) → `hazmat_worker` con el
+`.eim` → ventana OpenCV (`hazmat_viewer`) con el feed anotado, Hz del stream,
+inferencias/s del worker y las señales detectadas. AprilTag y YOLO-objetos
+van apagados para aislar el modelo hazmat. La cámara se autodetecta
+(GENERAL WEBCAM si está, si no la integrada); `Q`/`ESC` cierra la ventana.
+
+```bash
+# comparar con el YOLO entrenado
+ros2 launch rescue_bringup test_hazmat_simple.launch.py \
+  hazmat_model:=$(ros2 pkg prefix rescue_bringup)/share/rescue_bringup/models/best.pt
+```
+
+### 4. Prueba local con las dos cámaras del PC (sin robot)
 
 ```bash
 ros2 launch rescue_bringup test_local_cameras.launch.py
